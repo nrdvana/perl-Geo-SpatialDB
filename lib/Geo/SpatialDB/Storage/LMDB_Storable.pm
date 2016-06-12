@@ -56,7 +56,7 @@ has _env => ( is => 'lazy' );
 sub _build__env {
 	my $self= shift;
 	my $path= $self->path;
-	LMDB::Env->new($path, {
+	LMDB::Env->new("$path", {
 		mapsize => $self->mapsize,
 		flags   =>
 			(-d $path? 0 : MDB_NOSUBDIR)
