@@ -1,8 +1,8 @@
-package Geo::SpatialDB::Entity::Route::Road;
+package Geo::SpatialDB::Route::Road;
 use Moo 2;
 use namespace::clean;
 
-extends 'Geo::SpatialDB::Entity::Route';
+extends 'Geo::SpatialDB::Route';
 
 has oneway => ( is => 'rw' );
 has lanes  => ( is => 'rw' );

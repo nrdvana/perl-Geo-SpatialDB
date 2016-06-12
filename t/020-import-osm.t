@@ -26,9 +26,9 @@ package Test::Dummy::SpatialDB {
 	sub add_entity {
 		my ($self, $entity)= @_;
 		$log->debugf("%s", $entity);
-		$self->{location_count}++ if $entity->isa('Geo::SpatialDB::Entity::Location');
-		$self->{route_count}++    if $entity->isa('Geo::SpatialDB::Entity::Route');
-		$self->{area_count}++     if $entity->isa('Geo::SpatialDB::Entity::Area');
+		$self->{location_count}++ if $entity->isa('Geo::SpatialDB::Location');
+		$self->{route_count}++    if $entity->isa('Geo::SpatialDB::RouteSegment');
+		$self->{area_count}++     if $entity->isa('Geo::SpatialDB::Area');
 		push @{ $self->{entities} }, $entity;
 	}
 };

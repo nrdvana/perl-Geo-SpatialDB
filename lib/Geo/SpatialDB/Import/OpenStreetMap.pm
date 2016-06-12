@@ -2,8 +2,11 @@ package Geo::SpatialDB::Import::OpenStreetMap;
 use Moo 2;
 use Carp;
 use XML::Parser;
-use Geo::SpatialDB::Entity::Route::Road;
-use Geo::SpatialDB::Entity::Location;
+use Geo::SpatialDB::Location;
+use Geo::SpatialDB::Path;
+use Geo::SpatialDB::RouteSegment;
+use Geo::SpatialDB::Route;
+use Geo::SpatialDB::Area;
 use Log::Any '$log';
 use namespace::clean;
 
@@ -116,45 +119,45 @@ sub load_xml {
 
 sub preprocess {
 	my $self= shift;
-	my $store= $self->tmp_storage;
-	return if $store->get('preprocessed');
+	my $stor= $self->tmp_storage;
+	return if $stor->get('preprocessed');
 	
 	my ($way_id, $rel_id, $way, $rel);
 	
 	# Relate nodes to ways that reference them
-	my $i= $store->iterator('w');
+	my $i= $stor->iterator('w');
 	while ((($way_id,$way)= $i->()) and $way_id =~ /^w/) {
 		for my $node_id (@{ $way->{nd} // [] }) {
-			my $n= $store->get("n$node_id");
+			my $n= $stor->get("n$node_id");
 			if ($n) {
 				push @{ $n->[2] }, $way_id;
-				$store->put("n$node_id", $n);
+				$stor->put("n$node_id", $n);
 			} else {
 				$log->notice("Way $way_id references missing node $node_id");
 			}
 		}
 	}
 	# Relate nodes and ways to relations that reference them
-	$i= $store->iterator('r');
+	$i= $stor->iterator('r');
 	while ((($rel_id,$rel)= $i->()) and $rel_id =~ /^r/) {
 		for my $m (@{ $rel->{member} // [] }) {
 			my $typ= $m->{type} // '';
 			# If relation mentions a way or node, load it and add the reference
-			# and store it back.
+			# and stor it back.
 			if ($typ eq 'node' && $m->{ref}) {
-				my $n= $store->get("n$m->{ref}");
+				my $n= $stor->get("n$m->{ref}");
 				if ($n) {
 					push @{ $n->[2] }, $rel_id;
-					$store->put("n$m->{ref}");
+					$stor->put("n$m->{ref}");
 				} else {
 					$log->notice("Relation $rel_id references missing node $m->{ref}");
 				}
 			}
 			elsif ($typ eq 'way' && $m->{ref}) {
-				my $way= $store->get("w$m->{ref}");
+				my $way= $stor->get("w$m->{ref}");
 				if ($way) {
 					push @{ $way->{rel} }, $rel_id;
-					$store->put("w$m->{ref}", $way);
+					$stor->put("w$m->{ref}", $way);
 				}
 				else {
 					$log->notice("Relation $rel_id references missing way $m->{ref}");
@@ -163,7 +166,7 @@ sub preprocess {
 		}
 	}
 	
-	$store->put(preprocessed => 1);
+	$stor->put(preprocessed => 1);
 }
 
 sub generate_roads {
@@ -177,21 +180,23 @@ sub generate_roads {
 	while ((($way_id, $way)= $i->()) and $way_id =~ /^w/) {
 		next unless $way->{tag}{highway};
 		
-		
 		my @path;
 		for my $node_id (@{$way->{nd}}) {
-			my $node= $stor->get('n'.$node_id);
+			my $node= $stor->get("n$node_id");
 			if (!$node) {
 				$log->error("Way $way_id references missing node $node_id");
 				next;
 			}
 			# Is the node referenced by other ways? If so, we create it as a "location".
 			# If not, then we just grab its lat/lon and ignore the rest.
+			# TODO: we should generate an Intersection Location and start a new
+			# RouteSegment each time more than one Way with tag of Highway
+			# shares the same node.
 			my %ref= map { $_ => 1 } @{ $node->[2] };
 			if (1 < keys %ref) {
 				my $export_id= "osm_n$node_id";
 				unless ($stor->get("_exported_$export_id")) {
-					my $loc= Geo::SpatialDB::Entity::Location->new(
+					my $loc= Geo::SpatialDB::Location->new(
 						id   => "osm_n$node_id",
 						type => 'todo',
 						lat  => $node->[0],
@@ -209,15 +214,35 @@ sub generate_roads {
 				push @path, [ $node->[0], $node->[1] ];
 			}
 		}
-		my $route= Geo::SpatialDB::Entity::Route::Road->new(
+		my $path= Geo::SpatialDB::Path->new(
+			id  => "osm_$way_id",
+			seq => \@path
+		);
+		# TODO: There should be multiple of these
+		my $segment= Geo::SpatialDB::RouteSegment->new(
 			id     => "osm_$way_id",
 			type   => 'road',
 			oneway => ($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes')? 1 : 0,
-			tags => $way->{tags},
-			path => \@path,
+			paths  => [ [ $path->id ] ],
+			tags   => $way->{tags},
 		);
-		$sdb->add_entity($route);
+		# TODO: Determine routes from the OSM relations with tag Highway
+		$sdb->add_entity($path);
+		$sdb->add_entity($segment);
 	}
+}
+
+sub generate_waterways {
+}
+
+sub generate_trails {
+}
+
+sub generate_areas {
+	# TODO: government zones
+	# TODO: postal zones
+	# TODO: time zones
+	# TODO: parks, historic areas, etc
 }
 
 sub _open_stream {
