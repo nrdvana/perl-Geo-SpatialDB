@@ -20,4 +20,6 @@ $importer->preprocess;
 $importer->tmp_storage->commit;
 
 my $stats= $importer->stats;
-printf "processed %d ways and %d relations\n", $stats->{preproc_way}, $stats->{preproc_relation};
+printf "processed %d ways and %d relations, rewriting %d nodes and %d ways\n",
+	$stats->{preproc_way}, $stats->{preproc_relation},
+	$stats->{preproc_rewrite_node}, $stats->{preproc_rewrite_way};

@@ -130,6 +130,18 @@ sub put {
 	$self->_db->put($k, $v);
 }
 
+=head2 commit, rollback
+
+  $stor->commit()
+  # - or -
+  $stor->rollback()
+
+All 'get' or 'put' operations operate under an implied transaction.
+If you want to save your changes, or get a fresh view of the database to
+see concurrent changes by other processes, you need to call 'commit' or 'rollback'.
+
+=cut
+
 sub commit {
 	my $self= shift;
 	if ($self->_txn) {

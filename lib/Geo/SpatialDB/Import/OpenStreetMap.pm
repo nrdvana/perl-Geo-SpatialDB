@@ -134,6 +134,7 @@ sub preprocess {
 			if ($n) {
 				push @{ $n->[2] }, $way_id;
 				$stor->put("n$node_id", $n);
+				$stats->{preproc_rewrite_node}++;
 			} else {
 				$log->notice("Way $way_id references missing node $node_id");
 			}
@@ -152,6 +153,7 @@ sub preprocess {
 				if ($n) {
 					push @{ $n->[2] }, $rel_id;
 					$stor->put("n$m->{ref}");
+					$stats->{preproc_rewrite_node}++;
 				} else {
 					$log->notice("Relation $rel_id references missing node $m->{ref}");
 				}
@@ -161,6 +163,7 @@ sub preprocess {
 				if ($way) {
 					push @{ $way->{rel} }, $rel_id;
 					$stor->put("w$m->{ref}", $way);
+					$stats->{preproc_rewrite_way}++;
 				}
 				else {
 					$log->notice("Relation $rel_id references missing way $m->{ref}");
