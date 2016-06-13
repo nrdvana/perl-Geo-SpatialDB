@@ -220,20 +220,20 @@ sub generate_roads {
 				push @path, [ $node->[0], $node->[1] ];
 			}
 		}
-		my $path= Geo::SpatialDB::Path->new(
-			id  => "osm_$way_id",
-			seq => \@path
-		);
+		#my $path= Geo::SpatialDB::Path->new(
+		#	id  => "osm_$way_id",
+		#	seq => \@path
+		#);
 		# TODO: There should be multiple of these
 		my $segment= Geo::SpatialDB::RouteSegment->new(
 			id     => "osm_$way_id",
 			type   => 'road',
 			oneway => ($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes')? 1 : 0,
-			paths  => [ [ $path->id ] ],
+			path   => \@path,
 			tags   => $way->{tags},
 		);
 		# TODO: Determine routes from the OSM relations with tag Highway
-		$sdb->add_entity($path);
+		#$sdb->add_entity($path);
 		$sdb->add_entity($segment);
 	}
 }

@@ -4,7 +4,7 @@ use namespace::clean;
 
 extends 'Geo::SpatialDB::Entity';
 
-has paths  => ( is => 'rw' );
+has path   => ( is => 'rw' );
 has oneway => ( is => 'rw' );
 has lanes  => ( is => 'rw' );
 has speed  => ( is => 'rw' );
