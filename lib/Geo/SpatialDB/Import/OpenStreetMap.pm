@@ -120,6 +120,7 @@ sub load_xml {
 sub preprocess {
 	my $self= shift;
 	my $stor= $self->tmp_storage;
+	my $stats= $self->stats;
 	return if $stor->get('preprocessed');
 	
 	my ($way_id, $rel_id, $way, $rel);
@@ -127,6 +128,7 @@ sub preprocess {
 	# Relate nodes to ways that reference them
 	my $i= $stor->iterator('w');
 	while ((($way_id,$way)= $i->()) and $way_id =~ /^w/) {
+		$stats->{preproc_way}++;
 		for my $node_id (@{ $way->{nd} // [] }) {
 			my $n= $stor->get("n$node_id");
 			if ($n) {
@@ -140,6 +142,7 @@ sub preprocess {
 	# Relate nodes and ways to relations that reference them
 	$i= $stor->iterator('r');
 	while ((($rel_id,$rel)= $i->()) and $rel_id =~ /^r/) {
+		$stats->{preproc_relation}++;
 		for my $m (@{ $rel->{member} // [] }) {
 			my $typ= $m->{type} // '';
 			# If relation mentions a way or node, load it and add the reference
@@ -165,7 +168,7 @@ sub preprocess {
 			}
 		}
 	}
-	
+	$stor->put(stats => $stats);
 	$stor->put(preprocessed => 1);
 }
 

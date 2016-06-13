@@ -52,6 +52,12 @@ sub BUILD {
 	$self->get(0);
 }
 
+sub DESTROY {
+	my $self= shift;
+	warn "Destroying LMDB_Storable instance with uncommitted data!"
+		if $self->_txn && $self->_written;
+}
+
 has _env => ( is => 'lazy' );
 sub _build__env {
 	my $self= shift;
@@ -66,11 +72,13 @@ sub _build__env {
 	);
 }
 
-has _txn => ( is => 'lazy' );
+has _txn => ( is => 'lazy', clearer => 1 );
+has _written => ( is => 'rw' );
 sub _build__txn {
 	shift->_env->BeginTxn;
 }
-has _db => ( is => 'lazy' );
+
+has _db => ( is => 'lazy', clearer => 1 );
 sub _build__db {
 	shift->_txn->OpenDB();
 }
@@ -108,6 +116,7 @@ If C<$value> is undefined, this deletes the key from the database.
 
 sub put {
 	my ($self, $k, $v)= @_;
+	$self->{_written}= 1;
 	if (!defined $v) {
 		return $self->_db->del($k);
 	}
@@ -119,6 +128,26 @@ sub put {
 		ord(substr($v, 0, 1)) > 0x1F or _croak("scalars must not start with control characters");
 	}
 	$self->_db->put($k, $v);
+}
+
+sub commit {
+	my $self= shift;
+	if ($self->_txn) {
+		$self->_txn->commit;
+		$self->_clear_db;
+		$self->_clear_txn;
+	}
+	$self->{_written}= 0;
+}
+
+sub rollback {
+	my $self= shift;
+	if ($self->_txn) {
+		$self->_txn->abort;
+		$self->_clear_db;
+		$self->_clear_txn;
+	}
+	$self->{_written}= 0;
 }
 
 =head2 iterator

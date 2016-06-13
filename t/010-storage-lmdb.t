@@ -40,6 +40,8 @@ while (my $k= $i->()) {
 }
 is_deeply( \@keys, ['c', 'd', 'e'], 'iterate keys from "b" onward' );
 
+$store->commit; # test again after committing changes
+
 @keys= ();
 my @vals;
 $i= $store->iterator('b');
@@ -53,5 +55,7 @@ is_deeply( \@vals, [ \3, [1, 2, 3, 4], { a=>1, b=>2 } ], 'iterate (k,v) vals fro
 
 $store->put('d', undef);
 is( $store->get('d'), undef, 'deleted "d"' );
+
+$store->commit;
 
 done_testing;

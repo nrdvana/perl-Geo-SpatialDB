@@ -34,7 +34,10 @@ package Test::Dummy::SpatialDB {
 };
 
 $importer->load_xml(catfile($FindBin::RealBin, 'data', 'peterborough.osm.bz2'));
+$importer->tmp_storage->commit;
+
 $importer->preprocess;
+$importer->tmp_storage->commit;
 
 my $sdb= Test::Dummy::SpatialDB->new;
 $importer->generate_roads($sdb);
