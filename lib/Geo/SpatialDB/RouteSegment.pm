@@ -8,5 +8,6 @@ has path   => ( is => 'rw' );
 has oneway => ( is => 'rw' );
 has lanes  => ( is => 'rw' );
 has speed  => ( is => 'rw' );
+has routes => ( is => 'rw' );
 
 1;

@@ -6,6 +6,7 @@ use Geo::SpatialDB::RouteSegment;
 use Geo::SpatialDB::Route;
 use Geo::SpatialDB::Area;
 use Module::Runtime 'require_module';
+use Log::Any '$log';
 sub _croak { require Carp; goto &Carp::croak }
 use namespace::clean;
 
@@ -122,10 +123,11 @@ sub _register_entity_within {
 	for my $lat_k ($lat_key_0 .. $lat_key_1) {
 		for my $lon_k ($lon_key_0 .. $lon_key_1) {
 			# Load detail node, add new entity ref, and save detail node
-			my $node_key= ":$level,$lat_k,$lon_k";
-			my $node= $stor->get($node_key) // {};
-			push @{ $node->{ent} }, $ent->id;
-			$stor->put($node_key, $node);
+			my $bucket_key= ":$level,$lat_k,$lon_k";
+			my $bucket= $stor->get($bucket_key) // {};
+			my %seen;
+			$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $ent->id ];
+			$stor->put($bucket_key, $bucket);
 		}
 	}
 }
@@ -134,14 +136,18 @@ sub add_entity {
 	my ($self, $e)= @_;
 	# If it's a location, index the point.  Use radius to determine what level to include it in.
 	if ($e->isa('Geo::SpatialDB::Location')) {
-		my ($lat, $lon, $rad)= ($e->lat, $e->lon, $e->radius//0);
+		my ($lat, $lon, $rad)= ($e->lat, $e->lon, $e->rad//0);
 		# Convert radius to lat arc degrees and lon arc degrees
 		my $dLat= $rad? ($rad / 111000 * $self->latlon_precision) : 0;
 		# Longitude is affected by latitude
 		my $dLon= $rad? ($rad / (111699 * cos($lat / (360*$self->latlon_precision)))) : 0;
+		$self->storage->put($e->id, $e);
 		$self->_register_entity_within($e, $lat - $dLat, $lon - $dLon, $lat + $dLat, $lon + $dLon);
 	}
 	elsif ($e->isa('Geo::SpatialDB::RouteSegment')) {
+		unless (@{ $e->path }) {
+			$log->warn("RouteSegment with zero-length path...");
+		}
 		my ($lat0, $lon0, $lat1, $lon1);
 		for my $pt (@{ $e->path }) {
 			$lat0= $pt->[0] if !defined $lat0 or $lat0 > $pt->[0];
@@ -149,17 +155,19 @@ sub add_entity {
 			$lon0= $pt->[1] if !defined $lon0 or $lon0 > $pt->[1];
 			$lon1= $pt->[1] if !defined $lon1 or $lon1 < $pt->[1];
 		}
+		$self->storage->put($e->id, $e);
 		$self->_register_entity_within($e, $lat0, $lon0, $lat1, $lon1);
+	}
+	else {
+		$log->warn("Ignoring entity ".$e->id);
 	}
 }
 
-# radius  - the search radius
-# min_rad - the minimum radius of object that we care to see
-# max_rad - the maximum radius of object that we care to see
-# A node only holds objects of radius twice its size to 
-sub _get_node_keys_for_area {
+# min_rad - the minimum radius (meters) of object that we care to see
+sub _get_bucket_keys_for_area {
 	my ($self, $lat0, $lon0, $lat1, $lon1, $min_rad)= @_;
 	my @keys;
+	$log->debugf("  sw %d,%d  ne %d,%d  min radius %d", $lat0,$lon0, $lat1,$lon1, $min_rad);
 	for my $level (0 .. $#{ $self->zoom_levels }) {
 		my $granularity= $self->zoom_levels->[$level];
 		my $lat_height= 111000 * $granularity / $self->latlon_precision;
@@ -171,9 +179,11 @@ sub _get_node_keys_for_area {
 		my $lon_key_0= $lon0 / $granularity;
 		my $lon_key_1= $lon1 / $granularity;
 		for my $lat_key ($lat_key_0 .. $lat_key_1) {
-			...
+			push @keys, ":$level,$lat_key,$_"
+				for $lon_key_0 .. $lon_key_1;
 		}
 	}
+	return @keys;
 }
 
 =head2 find_in_radius
@@ -186,24 +196,17 @@ sub find_at {
 	my $dLat= $radius? ($radius / 111000 * $self->latlon_precision) : 0;
 	# Longitude is affected by latitude
 	my $dLon= $radius? ($radius / (111699 * cos($lat / (360*$self->latlon_precision)))) : 0;
-	my @keys= $self->_get_node_keys_for_area($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon, $radius/200);
-	...;
-}
-
-=head2 load_tiles
-
-  my $result= $sdb->load_tiles( $lat, $lon, $radius, $filter );
-
-This method loads a list of any tiles that fall in the specified radius.
-Filter is optional, and can be used to exclude types of data from the result.
-
-Returns an arrayref of L<Geo::SpatialDB::Tile>
-
-=cut
-
-sub load_tiles {
-	my ($self, $lat, $lon, $radius, $filter)= @_;
-	
+	my @keys= $self->_get_bucket_keys_for_area($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon, $radius/200);
+	my %result;
+	$log->debugf("  searching buckets: %s", \@keys);
+	for (@keys) {
+		my $bucket= $self->storage->get($_)
+			or next;
+		for (@{ $bucket->{ent} // [] }) {
+			$result{entities}{$_} //= $self->storage->get($_);
+		}
+	}
+	\%result;
 }
 
 1;

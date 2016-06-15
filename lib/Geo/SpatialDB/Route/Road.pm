@@ -4,11 +4,8 @@ use namespace::clean;
 
 extends 'Geo::SpatialDB::Route';
 
-has oneway => ( is => 'rw' );
-has lanes  => ( is => 'rw' );
-has speed  => ( is => 'rw' );
-has names  => ( is => 'rw' );
-
-sub taxonomy { 'rt' }
+has oneway   => ( is => 'rw' );
+has speed    => ( is => 'rw' );
+has names    => ( is => 'rw' );
 
 1;

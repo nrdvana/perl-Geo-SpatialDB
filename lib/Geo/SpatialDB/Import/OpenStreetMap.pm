@@ -5,7 +5,7 @@ use XML::Parser;
 use Geo::SpatialDB::Location;
 use Geo::SpatialDB::Path;
 use Geo::SpatialDB::RouteSegment;
-use Geo::SpatialDB::Route;
+use Geo::SpatialDB::Route::Road;
 use Geo::SpatialDB::Area;
 use Log::Any '$log';
 use namespace::clean;
@@ -147,7 +147,7 @@ sub preprocess {
 		for my $m (@{ $rel->{member} // [] }) {
 			my $typ= $m->{type} // '';
 			# If relation mentions a way or node, load it and add the reference
-			# and stor it back.
+			# and store it back.
 			if ($typ eq 'node' && $m->{ref}) {
 				my $n= $stor->get("n$m->{ref}");
 				if ($n) {
@@ -179,6 +179,7 @@ sub generate_roads {
 	my ($self, $sdb)= @_;
 	$self->preprocess;
 	my $stor= $self->tmp_storage;
+	my $stats= $self->stats;
 	
 	# Iterate every 'way' looking for ones with a 'highway' tag
 	my $i= $stor->iterator('w');
@@ -186,6 +187,11 @@ sub generate_roads {
 	while ((($way_id, $way)= $i->()) and $way_id =~ /^w/) {
 		next unless $way->{tag}{highway};
 		
+		my $type= 'road.' . delete $way->{tag}{highway};
+
+		my $route_id= "osm_${type}_" . lc($way->{tag}{name} // $way_id);
+		$route_id =~ s/[^a-z0-9_.]//g;
+
 		my @path;
 		for my $node_id (@{$way->{nd}}) {
 			my $node= $stor->get("n$node_id");
@@ -213,6 +219,7 @@ sub generate_roads {
 					);
 					$sdb->add_entity($loc);
 					$stor->put("_exported_$export_id", 1);
+					$stats->{gen_road_loc}++;
 				}
 				push @path, [ $node->[0], $node->[1], $export_id ];
 			}
@@ -220,21 +227,62 @@ sub generate_roads {
 				push @path, [ $node->[0], $node->[1] ];
 			}
 		}
+		if (!@path) {
+			$log->notice("Skipping empty path generated from way $way_id");
+			next;
+		}
 		#my $path= Geo::SpatialDB::Path->new(
 		#	id  => "osm_$way_id",
 		#	seq => \@path
 		#);
 		# TODO: There should be multiple of these
-		my $segment= Geo::SpatialDB::RouteSegment->new(
+		my @segments= ( Geo::SpatialDB::RouteSegment->new(
 			id     => "osm_$way_id",
-			type   => 'road',
-			oneway => ($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes')? 1 : 0,
+			type   => $type,
+			($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes'? (oneway => 1) : ()),
 			path   => \@path,
-			tags   => $way->{tags},
-		);
-		# TODO: Determine routes from the OSM relations with tag Highway
-		#$sdb->add_entity($path);
-		$sdb->add_entity($segment);
+			tags   => $way->{tag},
+			routes => [ $route_id ],
+		) );
+		
+		# Load or create a "Route" object to represent the name and metadata of this road.
+		# TODO: this is pretty basic right now.  do smarter stuff here.
+		my $road= $sdb->storage->get($route_id);
+		if ($road) {
+			# Add references to these segments
+			$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
+		} else {
+			my @names= delete $way->{tag}{name};
+			my $i= 1;
+			while (defined $way->{tag}{"name_$i"}) {
+				push @names, delete $way->{tag}{"name_$i"};
+				++$i;
+			}
+			# Scan the relations mentioning this Way for highway names,
+			# which we include in the names list
+			for (grep { /^r/ } @{ $way->{rel} }) {
+				my $rel= $stor->get($_);
+				if ($rel && $rel->{tag}{type} eq 'route' && $rel->{tag}{route} eq 'road') {
+					push @names, grep { defined } $rel->{tag}{name}, $rel->{tag}{ref};
+				}
+			}
+			
+			$stats->{gen_road}++;
+			$road= Geo::SpatialDB::Route::Road->new(
+				id     => $route_id,
+				type   => $type,
+				names  => \@names,
+				tags   => $way->{tag},
+				segments => [ map { $_->id } @segments ],
+			);
+		};
+		
+		# Write or overwrite the road, since we modified it to reference these segment(s)
+		$sdb->add_entity($road);
+		# Write each segment
+		$sdb->add_entity($_) for @segments;
+		$stats->{gen_road_seg}+= @segments;
+		$stats->{gen_road_seg_pts}+= scalar @path;
 	}
 }
 

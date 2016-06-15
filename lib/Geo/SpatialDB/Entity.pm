@@ -5,7 +5,6 @@ use namespace::clean;
 has id   => ( is => 'rw' );
 has type => ( is => 'rw' );
 has tags => ( is => 'rw' );
-has rel  => ( is => 'rw' );
 
 sub TO_JSON {
 	my $self= shift;

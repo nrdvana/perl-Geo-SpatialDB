@@ -4,6 +4,6 @@ use namespace::clean;
 
 extends 'Geo::SpatialDB::Entity';
 
-has paths => ( is => 'rw' );
+has segments => ( is => 'rw' );
 
 1;
