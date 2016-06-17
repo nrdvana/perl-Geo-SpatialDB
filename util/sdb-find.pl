@@ -29,6 +29,14 @@ $lon= int($lon * $sdb->latlon_precision)
 my $result= $sdb->find_at($lat, $lon, $rad);
 use JSON::XS;
 my $j= JSON::XS->new->canonical->utf8->allow_blessed->convert_blessed;
-while (my ($k, $v)= each %{ $result->{entities} }) {
-	print "$k\t".$j->encode($v)."\n";
+my %seen_roads;
+while (my ($k, $ent)= each %{ $result->{entities} }) {
+	print "$k\t".$j->encode($ent)."\n";
+	if ($ent->can('routes')) {
+		$seen_roads{$_}++ for @{ $ent->routes };
+	}
+}
+for (sort keys %seen_roads) {
+	my $ent= $sdb->storage->get($_);
+	print "$_\t".$j->encode($ent)."\n";
 }
