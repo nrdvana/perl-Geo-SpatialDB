@@ -276,6 +276,7 @@ sub generate_roads {
 			type   => $type,
 			($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes'? (oneway => 1) : ()),
 			path   => \@path,
+			# TODO: add tags related to road surface or speed limit
 			routes => [],
 		) );
 
@@ -294,23 +295,29 @@ sub generate_roads {
 				push @names, delete $way->{tag}{"name_$i"};
 				++$i;
 			}
-			$stats->{gen_road}++;
-			my $route_id= sprintf("%sw%X", $prefix, substr($way_id,1));
-			$road= Geo::SpatialDB::Route::Road->new(
-				id       => $route_id,
-				type     => $type,
-				names    => \@names,
-				tags     => $way->{tag},
-				segments => [],
-			);
+			# TODO: keep only the keys we care about
+			# We don't bother creating a Road entry unless it has a name or tags
+			if (@names || keys %{ $way->{tag} }) {
+				$stats->{gen_road}++;
+				my $route_id= sprintf("%sw%X", $prefix, substr($way_id,1));
+				$road= Geo::SpatialDB::Route::Road->new(
+					id       => $route_id,
+					type     => $type,
+					names    => \@names,
+					tags     => $way->{tag},
+					segments => [],
+				);
+			}
 		}
-		# Add segment ref to the route
-		$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
-		# Add route reference to the segments
-		push @{ $_->routes }, $road->id
-			for @segments;
-		# Store the road temporarily (in case there are more changes needed)
-		$stor->put($tmp_prefix . $road->id, $road);
+		if ($road) {
+			# Add segment ref to the route
+			$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
+			# Add route reference to the segments
+			push @{ $_->routes }, $road->id
+				for @segments;
+			# Store the road temporarily (in case there are more changes needed)
+			$stor->put($tmp_prefix . $road->id, $road);
+		}
 		
 		# Scan the relations mentioning this Way for highway names,
 		# which we create as additional Route entities
@@ -322,21 +329,26 @@ sub generate_roads {
 				if (!$road) {
 					$stats->{gen_road}++;
 					my @names= grep { defined } $rel->{tag}{name}, $rel->{tag}{ref};
-					$road= Geo::SpatialDB::Route::Road->new(
-						id       => $route_id,
-						type     => 'road.network',
-						names    => \@names,
-						tags     => $rel->{tag},
-						segments => [],
-					);
+					# TODO: keep only the keys we care about
+					if (@names || keys %{ $rel->{tag} }) {
+						$road= Geo::SpatialDB::Route::Road->new(
+							id       => $route_id,
+							type     => 'road.network',
+							names    => \@names,
+							tags     => $rel->{tag},
+							segments => [],
+						);
+					}
 				}
-				# Add segment ref to the route
-				$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
-				# Add route reference to the segments
-				push @{ $_->routes }, $road->id
-					for @segments;
-				# Then store the road again, to tmp storage
-				$stor->put("$tmp_prefix$route_id", $road);
+				if ($road) {
+					# Add segment ref to the route
+					$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
+					# Add route reference to the segments
+					push @{ $_->routes }, $road->id
+						for @segments;
+					# Then store the road again, to tmp storage
+					$stor->put("$tmp_prefix$route_id", $road);
+				}
 			}
 			#if ($rel && ($rel->{tag}{type}//'') eq 'route' && !$rel->{tag}{route}) {
 			#	use DDP;
