@@ -7,6 +7,7 @@ use lib catdir($FindBin::Bin, '..', 'lib');
 use Geo::SpatialDB;
 use Geo::SpatialDB::Import::OpenStreetMap;
 use Geo::SpatialDB::Storage::LMDB_Storable;
+use Log::Any::Adapter 'Daemontools';
 
 my $db_path= shift or die "First argument must be tmp database";
 my $dest=   shift or die "Second argument must be the SpatialDB database";
@@ -31,3 +32,6 @@ $sdb->storage->commit;
 my $stats= $importer->stats;
 printf "Loaded %d roads with %d segments totaling %d verticies, with %d nodes\n",
 	$stats->{gen_road}, $stats->{gen_road_seg}, $stats->{gen_road_seg_pts}, $stats->{gen_road_loc};
+printf "By type:\n";
+printf "   %10d  %s\n", $stats->{types}{$_}, $_
+	for keys %{ $stats->{types} // {} };

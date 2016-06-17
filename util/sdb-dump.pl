@@ -10,6 +10,7 @@ use Geo::SpatialDB::Import::OpenStreetMap;
 use Geo::SpatialDB::Storage::LMDB_Storable;
 
 my $sdb_path= shift or die "First argument must be database path";
+my $key= shift;
 
 my $sdb= Geo::SpatialDB->new(
 	storage => Geo::SpatialDB::Storage::LMDB_Storable->new(
@@ -17,8 +18,15 @@ my $sdb= Geo::SpatialDB->new(
 	)
 );
 
-my $i= $sdb->storage->iterator();
 my $j= JSON::XS->new->canonical->allow_blessed->convert_blessed;
-while (my ($k, $v)= $i->()) {
-	printf "%s\t%s\n", $k, $j->encode($v);
+
+if ($key) {
+	my $x= $sdb->storage->get($key);
+	printf "%s\n", $j->encode($x);
+}
+else {
+	my $i= $sdb->storage->iterator();
+	while (my ($k, $v)= $i->()) {
+		printf "%s\t%s\n", $k, $j->encode($v);
+	}
 }

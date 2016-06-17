@@ -21,7 +21,14 @@ my $sdb= Geo::SpatialDB->new(
 	)
 );
 
-my $result= $sdb->find_at($lat, $lon, $rad);
+$lat= int($lat * $sdb->latlon_precision)
+	if $lat =~ /\./;
+$lon= int($lon * $sdb->latlon_precision)
+	if $lon =~ /\./;
 
-use DDP;
-p $result;
+my $result= $sdb->find_at($lat, $lon, $rad);
+use JSON::XS;
+my $j= JSON::XS->new->canonical->utf8->allow_blessed->convert_blessed;
+while (my ($k, $v)= each %{ $result->{entities} }) {
+	print "$k\t".$j->encode($v)."\n";
+}

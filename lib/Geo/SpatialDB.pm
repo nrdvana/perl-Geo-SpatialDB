@@ -158,6 +158,10 @@ sub add_entity {
 		$self->storage->put($e->id, $e);
 		$self->_register_entity_within($e, $lat0, $lon0, $lat1, $lon1);
 	}
+	elsif ($e->isa('Geo::SpatialDB::Route')) {
+		# Routes don't get added to positional buckets.  Just their segments.
+		$self->storage->put($e->id, $e);
+	}
 	else {
 		$log->warn("Ignoring entity ".$e->id);
 	}
