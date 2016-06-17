@@ -56,6 +56,9 @@ is_deeply( \@vals, [ \3, [1, 2, 3, 4], { a=>1, b=>2 } ], 'iterate (k,v) vals fro
 $store->put('d', undef);
 is( $store->get('d'), undef, 'deleted "d"' );
 
+$store->put('b', undef);
+is( $store->get('b'), undef, 'no effect on non-existent key' );
+
 $store->commit;
 
 done_testing;

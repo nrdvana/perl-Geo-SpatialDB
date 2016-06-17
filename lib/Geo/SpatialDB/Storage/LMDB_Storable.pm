@@ -118,7 +118,15 @@ sub put {
 	my ($self, $k, $v)= @_;
 	$self->{_written}= 1;
 	if (!defined $v) {
-		return $self->_db->del($k);
+		local $LMDB_File::die_on_err= 0;
+		my ($ret, $err);
+		{
+			local $@;
+			$ret= $self->_db->del($k);
+			$err= $@;
+		}
+		croak $err if $ret && $ret != MDB_NOTFOUND;
+		return;
 	}
 	elsif (ref $v) {
 		$v= freeze($v);
