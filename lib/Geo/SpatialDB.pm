@@ -15,11 +15,14 @@ use namespace::clean;
 
 =head1 DESCRIPTION
 
-Geo::SpatialDB is an API that provides reverse geocoding on top of a simple
+THIS API IS NOT FINALIZED.  If you use it, please don't blindly upgrade.  I'm
+releasing it primarily for feedback on the design.
+
+Geo::SpatialDB provides reverse geocoding services on top of a simple
 key/value database.  It is designed primarily for reverse-geocoding 2D areas
 for map rendering, with some limited forward-geocoding ability to find things
 near a specified location.  It does *NOT* yet support calculation of the best
-route between two points.
+route between two points, but I intend to eventually add that.
 
 By using a simple key/value back-end, Geo::SpatialDB can use static data from a
 read-only filesystem, which is currently not supported by more advanced engines
@@ -92,14 +95,13 @@ compression/decompression system, so try not to write code that depends on them.
 
 has zoom_levels      => is => 'rw', default => sub { [ 250_000, 62_500, 15_265 ] };
 has latlon_precision => is => 'rw', default => sub { 1_000_000 };
-
-has storage_cfg  => is => 'rw';
-has storage      => is => 'lazy', coerce => \&_build_storage;
+has storage          => is => 'lazy', coerce => \&_build_storage;
 
 sub _build_storage {
 	if (!$_[0] || ref($_[0]) eq 'HASH') {
 		my %cfg= %{ $_[0] // {} };
 		my $class= delete $cfg{CLASS} // 'LMDB_Storable';
+		$class= "Geo::SpatialDB::Storage::$class";
 		require_module($class);
 		$class->new(%cfg);
 	}
