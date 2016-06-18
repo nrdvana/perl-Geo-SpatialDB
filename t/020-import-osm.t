@@ -18,7 +18,7 @@ package Test::Dummy::SpatialDB {
 	use Moo 2;
 	use Log::Any '$log';
 	
-	has entities        => is => 'rw';
+	has entities       => is => 'rw';
 	has location_count => is => 'rw', default => sub { 0 };
 	has route_count    => is => 'rw', default => sub { 0 };
 	has area_count     => is => 'rw', default => sub { 0 };
@@ -42,8 +42,8 @@ $importer->tmp_storage->commit;
 my $sdb= Test::Dummy::SpatialDB->new;
 $importer->generate_roads($sdb);
 
-is( $sdb->location_count, 438, 'locations' );
-is( $sdb->route_count,    291, 'routes' );
+is( $sdb->location_count, 358, 'locations' );
+is( $sdb->route_count,    237, 'routes' );
 is( $sdb->area_count,       0, 'areas' );
 
 done_testing;
