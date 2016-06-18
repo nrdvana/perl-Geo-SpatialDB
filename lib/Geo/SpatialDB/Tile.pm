@@ -1,4 +1,5 @@
 package Geo::SpatialDB::Tile;
+
 use Moo 2;
 use namespace::clean;
 

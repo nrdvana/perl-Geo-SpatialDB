@@ -1,6 +1,9 @@
 package Geo::SpatialDB::Location;
+
 use Moo 2;
 use namespace::clean;
+
+# ABSTRACT: A logical entity which can be described by a point on the map
 
 extends 'Geo::SpatialDB::Entity';
 

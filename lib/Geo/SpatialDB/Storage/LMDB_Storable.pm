@@ -1,4 +1,5 @@
 package Geo::SpatialDB::Storage::LMDB_Storable;
+
 use Moo 2;
 use LMDB_File ':flags', ':cursor_op', ':error';
 use Storable 'freeze', 'thaw';
@@ -6,6 +7,8 @@ sub _croak { require Carp; goto &Carp::croak }
 use namespace::clean;
 
 extends 'Geo::SpatialDB::Storage';
+
+# ABSTRACT: Key/value storage on LMDB, encoding Perl objects with 'Storable'
 
 =head1 DESCRIPTION
 

@@ -1,4 +1,5 @@
 package Geo::SpatialDB::Import::OpenStreetMap;
+
 use Moo 2;
 use Carp;
 use XML::Parser;

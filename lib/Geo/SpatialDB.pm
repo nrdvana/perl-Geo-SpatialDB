@@ -1,4 +1,5 @@
 package Geo::SpatialDB;
+
 use Moo 2;
 use Geo::SpatialDB::Location;
 use Geo::SpatialDB::Path;
@@ -9,6 +10,8 @@ use Module::Runtime 'require_module';
 use Log::Any '$log';
 sub _croak { require Carp; goto &Carp::croak }
 use namespace::clean;
+
+# ABSTRACT: Generic reverse-geocoding engine on top of key/value storage
 
 =head1 DESCRIPTION
 

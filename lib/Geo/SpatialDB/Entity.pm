@@ -1,6 +1,9 @@
 package Geo::SpatialDB::Entity;
+
 use Moo 2;
 use namespace::clean;
+
+# ABSTRACT: A logical thing found on a map (as opposed to the physical features that form it)
 
 has id   => ( is => 'rw' );
 has type => ( is => 'rw' );
