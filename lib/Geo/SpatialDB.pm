@@ -1,6 +1,7 @@
 package Geo::SpatialDB;
 
 use Moo 2;
+use Geo::SpatialDB::BBox;
 use Geo::SpatialDB::Location;
 use Geo::SpatialDB::Path;
 use Geo::SpatialDB::RouteSegment;
@@ -174,18 +175,21 @@ sub add_entity {
 
 # min_rad - the minimum radius (meters) of object that we care to see
 sub _get_bucket_keys_for_area {
-	my ($self, $lat0, $lon0, $lat1, $lon1, $min_dLat)= @_;
+	my ($self, $bbox, $min_dLat)= @_;
 	my @keys;
-	$log->debugf("  sw %d,%d  ne %d,%d  min arc %d", $lat0,$lon0, $lat1,$lon1, $min_dLat);
+	$log->debugf("  sw %d,%d  ne %d,%d  min arc %d",
+		$bbox->lat0,$bbox->lon0, $bbox->lat1,$bbox->lon1, $min_dLat)
+		if $log->is_debug;
+
 	for my $level (0 .. $#{ $self->zoom_levels }) {
 		my $granularity= $self->zoom_levels->[$level];
 		last if $granularity < $min_dLat;
 		# Iterate south to north
 		use integer;
-		my $lat_key_0= $lat0 / $granularity;
-		my $lat_key_1= $lat1 / $granularity;
-		my $lon_key_0= $lon0 / $granularity;
-		my $lon_key_1= $lon1 / $granularity;
+		my $lat_key_0= $bbox->lat0 / $granularity;
+		my $lat_key_1= $bbox->lat1 / $granularity;
+		my $lon_key_0= $bbox->lon0 / $granularity;
+		my $lon_key_1= $bbox->lon1 / $granularity;
 		for my $lat_key ($lat_key_0 .. $lat_key_1) {
 			push @keys, ":$level,$lat_key,$_"
 				for $lon_key_0 .. $lon_key_1;
@@ -194,7 +198,7 @@ sub _get_bucket_keys_for_area {
 	return @keys;
 }
 
-=head2 find_in_radius
+=head2 find_at
 
 =cut
 
@@ -204,13 +208,17 @@ sub find_at {
 	my $dLat= $radius? ($radius / 111000 * $self->latlon_precision) : 0;
 	# Longitude is affected by latitude
 	my $dLon= $radius? ($radius / (111699 * cos($lat / (360*$self->latlon_precision)))) : 0;
-	$self->find_in($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon, $dLat/200);
+	$self->find_in(
+		Geo::SpatialDB::BBox->new($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon),
+		$dLat/200
+	);
 }
 
 sub find_in {
-	my ($self, $lat0, $lon0, $lat1, $lon1, $min_arc)= @_;
-	my @keys= $self->_get_bucket_keys_for_area($lat0, $lon0, $lat1, $lon1, ($lat1-$lat0)/200);
-	my %result;
+	my ($self, $bbox, $min_arc)= @_;
+	$bbox= Geo::SpatialDB::BBox->coerce($bbox);
+	my @keys= $self->_get_bucket_keys_for_area($bbox, $bbox->dLat/200);
+	my %result= ( bbox => $bbox->clone );
 	$log->debugf("  searching buckets: %s", \@keys);
 	for (@keys) {
 		my $bucket= $self->storage->get($_)
