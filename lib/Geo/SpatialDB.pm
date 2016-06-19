@@ -174,13 +174,12 @@ sub add_entity {
 
 # min_rad - the minimum radius (meters) of object that we care to see
 sub _get_bucket_keys_for_area {
-	my ($self, $lat0, $lon0, $lat1, $lon1, $min_rad)= @_;
+	my ($self, $lat0, $lon0, $lat1, $lon1, $min_dLat)= @_;
 	my @keys;
-	$log->debugf("  sw %d,%d  ne %d,%d  min radius %d", $lat0,$lon0, $lat1,$lon1, $min_rad);
+	$log->debugf("  sw %d,%d  ne %d,%d  min arc %d", $lat0,$lon0, $lat1,$lon1, $min_dLat);
 	for my $level (0 .. $#{ $self->zoom_levels }) {
 		my $granularity= $self->zoom_levels->[$level];
-		my $lat_height= 111000 * $granularity / $self->latlon_precision;
-		last if $lat_height < $min_rad;
+		last if $granularity < $min_dLat;
 		# Iterate south to north
 		use integer;
 		my $lat_key_0= $lat0 / $granularity;
@@ -205,7 +204,12 @@ sub find_at {
 	my $dLat= $radius? ($radius / 111000 * $self->latlon_precision) : 0;
 	# Longitude is affected by latitude
 	my $dLon= $radius? ($radius / (111699 * cos($lat / (360*$self->latlon_precision)))) : 0;
-	my @keys= $self->_get_bucket_keys_for_area($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon, $radius/200);
+	$self->find_in($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon, $dLat/200);
+}
+
+sub find_in {
+	my ($self, $lat0, $lon0, $lat1, $lon1, $min_arc)= @_;
+	my @keys= $self->_get_bucket_keys_for_area($lat0, $lon0, $lat1, $lon1, ($lat1-$lat0)/200);
 	my %result;
 	$log->debugf("  searching buckets: %s", \@keys);
 	for (@keys) {
