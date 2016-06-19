@@ -7,6 +7,7 @@ use lib catdir($FindBin::Bin, '..', 'lib');
 use Geo::SpatialDB;
 use Geo::SpatialDB::Import::OpenStreetMap;
 use Geo::SpatialDB::Storage::LMDB_Storable;
+use Log::Any::Adapter 'Daemontools', -init => { env => 1 };
 
 my $sdb_path= shift or die "First argument must be database path";
 my ($lat, $lon)= split ',', shift;
