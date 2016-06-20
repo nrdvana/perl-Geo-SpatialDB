@@ -97,8 +97,8 @@ compression/decompression system, so try not to write code that depends on them.
 has zoom_levels      => is => 'rw', default => sub { [
 	# tiles per circle, microdegrees per tile
 	[ 360*4, int(1_000_000/4) ],
-	[ 360*64, int(1_000_000/64) ],
-	[ 360*512, int(1_000_000/512) ],
+	[ 360*32, int(1_000_000/32) ],
+	[ 360*128, int(1_000_000/128) ],
 ] };
 has latlon_precision => is => 'rw', default => sub { 1_000_000 };
 has storage          => is => 'lazy', coerce => \&_build_storage;
@@ -136,7 +136,7 @@ sub _register_entity_within {
 	$level-- while $level && ($lat1 - $lat0 > $self->zoom_levels->[$level][1]);
  	my ($tile_per_circle, $tile_udeg)= @{ $self->zoom_levels->[$level] };
 	my ($lat_key_0, $lon_key_0)= $self->tile_for_lat_lon($lat0, $lon0, $tile_udeg);
-	my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($lat1, $lon1, $tile_udeg);
+	my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($lat1-1, $lon1-1, $tile_udeg);
 	
 	# TODO: correctly handle wrap-around at lon=0, and edge cases at the poles
 	#       or, choose an entirely different bucket layout
@@ -200,7 +200,7 @@ sub _get_bucket_keys_for_area {
 		last if $tile_udeg < $min_dLat;
 		# Iterate south to north, west to east
 		my ($lat_key_0, $lon_key_0)= $self->tile_for_lat_lon($bbox->lat0, $bbox->lon0, $tile_udeg);
-		my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($bbox->lat1, $bbox->lon1, $tile_udeg);
+		my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($bbox->lat1-1, $bbox->lon1-1, $tile_udeg);
 		# TODO: correctly handle wrap-around at lon=0, and edge cases at the poles
 		#       or, choose an entirely different bucket layout
 		for my $lat_key ($lat_key_0 .. $lat_key_1) {
