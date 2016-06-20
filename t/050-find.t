@@ -29,6 +29,7 @@ $sdb->add_entity(
 		path => [ [1100000,1101000], [1101000,1101000] ],
 	)
 );
+$sdb->storage->commit;
 
 my $ret= $sdb->find_in([ 1000000, 1000000, 1010000, 1010000 ]);
 ok( defined $ret->{entities}{1}, 'result includes obj 1' );

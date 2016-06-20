@@ -94,7 +94,12 @@ compression/decompression system, so try not to write code that depends on them.
 
 =cut
 
-has zoom_levels      => is => 'rw', default => sub { [ 250_000, 62_500, 15_265 ] };
+has zoom_levels      => is => 'rw', default => sub { [
+	# tiles per circle, microdegrees per tile
+	[ 360*4, int(1_000_000/4) ],
+	[ 360*64, int(1_000_000/64) ],
+	[ 360*512, int(1_000_000/512) ],
+] };
 has latlon_precision => is => 'rw', default => sub { 1_000_000 };
 has storage          => is => 'lazy', coerce => \&_build_storage;
 
@@ -113,19 +118,28 @@ sub _build_storage {
 	}
 }
 
+sub tile_for_lat_lon {
+	my ($self, $lat, $lon, $tile_udeg)= @_;
+	use integer;
+	$lat= $lat % 360_000_000;
+	$lat += 360_000_000 if $lat < 0;
+	$lon= $lon % 360_000_000;
+	$lon += 360_000_000 if $lon < 0;
+	return ($lat / $tile_udeg, $lon / $tile_udeg);
+}
+
 sub _register_entity_within {
 	my ($self, $ent, $lat0, $lon0, $lat1, $lon1)= @_;
 	my $stor= $self->storage;
 	# Convert radius to arc degrees
 	my $level= $#{ $self->zoom_levels };
-	$level-- while $level && ($lat1 - $lat0 > $self->zoom_levels->[$level]);
- 	my $granularity= $self->zoom_levels->[$level];
-	use integer;
-	my $lat_key_0= $lat0 / $granularity;
-	my $lat_key_1= $lat1 / $granularity;
-	my $lon_key_0= $lon0 / $granularity;
-	my $lon_key_1= $lon1 / $granularity;
+	$level-- while $level && ($lat1 - $lat0 > $self->zoom_levels->[$level][1]);
+ 	my ($tile_per_circle, $tile_udeg)= @{ $self->zoom_levels->[$level] };
+	my ($lat_key_0, $lon_key_0)= $self->tile_for_lat_lon($lat0, $lon0, $tile_udeg);
+	my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($lat1, $lon1, $tile_udeg);
 	
+	# TODO: correctly handle wrap-around at lon=0, and edge cases at the poles
+	#       or, choose an entirely different bucket layout
 	for my $lat_k ($lat_key_0 .. $lat_key_1) {
 		for my $lon_k ($lon_key_0 .. $lon_key_1) {
 			# Load detail node, add new entity ref, and save detail node
@@ -182,14 +196,13 @@ sub _get_bucket_keys_for_area {
 		if $log->is_debug;
 
 	for my $level (0 .. $#{ $self->zoom_levels }) {
-		my $granularity= $self->zoom_levels->[$level];
-		last if $granularity < $min_dLat;
-		# Iterate south to north
-		use integer;
-		my $lat_key_0= $bbox->lat0 / $granularity;
-		my $lat_key_1= $bbox->lat1 / $granularity;
-		my $lon_key_0= $bbox->lon0 / $granularity;
-		my $lon_key_1= $bbox->lon1 / $granularity;
+		my ($tile_per_circle, $tile_udeg)= @{ $self->zoom_levels->[$level] };
+		last if $tile_udeg < $min_dLat;
+		# Iterate south to north, west to east
+		my ($lat_key_0, $lon_key_0)= $self->tile_for_lat_lon($bbox->lat0, $bbox->lon0, $tile_udeg);
+		my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($bbox->lat1, $bbox->lon1, $tile_udeg);
+		# TODO: correctly handle wrap-around at lon=0, and edge cases at the poles
+		#       or, choose an entirely different bucket layout
 		for my $lat_key ($lat_key_0 .. $lat_key_1) {
 			push @keys, ":$level,$lat_key,$_"
 				for $lon_key_0 .. $lon_key_1;
@@ -217,7 +230,8 @@ sub find_at {
 sub find_in {
 	my ($self, $bbox, $min_arc)= @_;
 	$bbox= Geo::SpatialDB::BBox->coerce($bbox);
-	my @keys= $self->_get_bucket_keys_for_area($bbox, $bbox->dLat/200);
+	$min_arc //= $bbox->dLat/200;
+	my @keys= $self->_get_bucket_keys_for_area($bbox, $min_arc);
 	my %result= ( bbox => $bbox->clone );
 	$log->debugf("  searching buckets: %s", \@keys);
 	for (@keys) {
