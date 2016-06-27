@@ -36,6 +36,12 @@ sub generate_route_lines {
 	\@lines;
 }
 
+sub latlon_to_cartesian {
+	my $self= shift;
+	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
+	map { $latlon_to_xyz->($_) } @_;
+}
+
 sub generate_route_polygons {
 	my ($self, $geo_search_result, %opts)= @_;
 	my @quads;
