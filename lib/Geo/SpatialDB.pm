@@ -100,7 +100,7 @@ has zoom_levels      => is => 'rw', default => sub { [
 	[ 360*32, int(1_000_000/32) ],
 	[ 360*128, int(1_000_000/128) ],
 ] };
-has latlon_precision => is => 'rw', default => sub { 1_000_000 };
+has latlon_scale     => is => 'rw', default => sub { 1_000_000 };
 has storage          => is => 'lazy', coerce => \&_build_storage;
 
 sub _build_storage {
