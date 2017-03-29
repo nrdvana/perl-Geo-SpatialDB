@@ -33,25 +33,27 @@ has tile_count => ( is => 'lazy', builder => sub { use integer; my $self= shift;
 sub get_tiles_for_rect {
 	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
 	use integer;
-	$lon0 += 360_000_000 while $lon0 < 180_000_000;
-	my $min_x= $lon0 / $self->lon_step;
+	$lon0= _wrap_lon($lon0);
+	$lat0= _clamp_lat($lat0);
+	my $min_x= ($lon0 + ($self->x_cnt/2) * $self->lon_step) / $self->lon_step;
 	my $min_y= ($lat0 + ($self->y_cnt/2) * $self->lat_step) / $self->lat_step;
-	return $min_y * $self->x_cnt + $min_x
+	return ($min_y % $self->y_cnt) * $self->x_cnt + ($min_x % $self->x_cnt)
 		if @_ <= 3;
-	$lon1 += 360_000_000 while $lon1 < $lon0;
-	my $max_x= $lon1 / $self->lon_step;
+	$lon1= _wrap_lon($lon1); $lon1 += 360_000_000 if $lon1 < $lon0;
+	$lat1= _clamp_lat($lat1);
+	my $max_x= ($lon1 + ($self->x_cnt/2) * $self->lon_step) / $self->lon_step;
 	my $max_y= ($lat1 + ($self->y_cnt/2) * $self->lat_step) / $self->lat_step;
 	my @ids;
 	for (my $y= $min_y; $y <= $max_y; ++$y) {
 		for (my $x= $min_x; $x <= $max_x; ++$x) {
-			push @ids, $y * $self->x_cnt + $x;
+			push @ids, ($y % $self->y_cnt) * $self->x_cnt + ($x % $self->x_cnt);
 		}
 	}
 	return @ids;
 }
 
 sub get_tile_at {
-	return shift->get_keys_for_rect(@_);
+	return shift->get_tiles_for_rect(@_);
 }
 
 sub get_tile_polygon {
@@ -59,15 +61,24 @@ sub get_tile_polygon {
 	use integer;
 	my ($y, $x)= ($tile_id / $self->x_cnt, $tile_id % $self->x_cnt);
 	#printf "id=$tile_id  x=$x y=$y  x_cnt=%f y_cnt=%f\n", $self->x_cnt, $self->y_cnt;
-	my $lat0= ($y - $self->y_cnt/2) * $self->lat_step;
-	my $lat1= $lat0 + $self->lat_step;
-	my $lon0= ($x - $self->x_cnt/2) * $self->lon_step;
-	my $lon1= $lon0 + $self->lon_step;
-	$lat0= -90_000_000 if $lat0 < -90_000_000;
-	$lat1= 90_000_000 if $lat1 > 90_000_000;
-	$lon0= -180_000_000 if $lon0 < -180_000_000;
-	$lon1= 180_000_000 if $lon1 > 180_000_000;
+	my $lat0= _clamp_lat(($y - $self->y_cnt/2) * $self->lat_step);
+	my $lat1= _clamp_lat($lat0 + $self->lat_step);
+	my $lon0= _clamp_lon(($x - $self->x_cnt/2) * $self->lon_step);
+	my $lon1= _clamp_lon($lon0 + $self->lon_step);
 	return ($lat0,$lon0,  $lat1,$lon0,  $lat1,$lon1,  $lat0,$lon1);
+}
+
+sub _clamp_lat {
+	$_[0] < -90_000_000? -90_000_000 : $_[0] > 90_000_000? 90_000_000 : $_[0]
+}
+sub _clamp_lon {
+	$_[0] < -180_000_000? -180_000_000 : $_[0] > 180_000_000? 180_000_000 : $_[0]
+}
+sub _wrap_lon {
+	use integer;
+	$_[0] < -180_000_000? (($_[0] - 180_000_000) % 360_000_000)+180_000_000
+		: $_[0] > 180_000_000? (($_[0] + 180_000_000) % 360_000_000) - 180_000_000
+		: $_[0]
 }
 
 1;

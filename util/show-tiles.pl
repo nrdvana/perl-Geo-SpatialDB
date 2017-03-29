@@ -27,11 +27,11 @@ while (1) {
 	glCallList($dlist);
 	glColor4d(.7,1,.7,1);
 	for ($mapper->get_tiles_for_rect($tlat, $tlon)) {
-		printf "%.2f,%.2f: tile=$_\n", $tlat*.000001, $tlon*.000001;
+		#printf "%.2f,%.2f: tile=$_\n", $tlat*.000001, $tlon*.000001;
 		glBegin(GL_POLYGON); plot_tile($_); glEnd();
 	}
 	glRotated($tlon * .000001, 0,0,1);
-	glRotated($tlat * .000001, 0,1,0);
+	glRotated(-$tlat * .000001, 0,1,0);
 	glBegin(GL_LINES); glVertex3d(0,0,0); glVertex3d(1,0,0); glEnd();
 	$glx->end_frame;
 	++$n;
