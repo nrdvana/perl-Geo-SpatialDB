@@ -7,46 +7,25 @@ has y_cnt      => ( is => 'lazy', builder => sub { use integer; my $self= shift;
 has x_cnt      => ( is => 'lazy', builder => sub { use integer; my $self= shift; 2 * ((179_999_999 + $self->lon_step) / $self->lon_step); } );
 has tile_count => ( is => 'lazy', builder => sub { use integer; my $self= shift; $self->y_cnt * $self->x_cnt; } );
 
-#has _pack_fn  => ( is => 'lazy' );
-#sub _build__pack_fn {
-#	use integer;
-#	my $self= shift;
-#	my $dlat= $self->lat_step;
-#	my $nlat= 2*((89_999_999+$dlat)/$dlat);
-#	my $lat_bits= _bit_len($nlat);
-#	my $dlon= $self->lon_step;
-#	my $nlon= (359_999_999+$dlon)/$dlon;
-#	my $lon_bits= _bit_len($nlon);
-#	my ($lat, $lon);
-#	my $rowstart= sub {
-#		
-#	};
-#	my $fn= ($lat_bits + $lon_bits > 32)? sub { pack('VV', ($lat+90_000_000)/$dlat, (($lon+360_000_000) / $dlon) % $nlon) }
-#		:   ($lat_bits + $lon_bits > 16)? sub { pack('V', (($lat+90_000_000)/$dlat << $lon_bits) + (($lon+360_000_000) / $dlon) % $nlon) }
-#		:                                 sub { pack('v', (($lat+90_000_000)/$dlat << $lon_bits) + (($lon+360_000_000) / $dlon) % $nlon) };
-#	$self->{_latref}= \$lat;
-#	$self->{_lonref}= \$lon;
-#}
-#
-#sub _bit_len { my $x= shift; my $b= 0; while($x) { ++$b; $x >>= 1; } }
-
 sub get_tiles_for_rect {
 	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
 	use integer;
+	my ($x_cnt, $lon_step, $y_cnt, $lat_step)=
+		( $self->x_cnt, $self->lon_step, $self->y_cnt, $self->lat_step );
 	$lon0= _wrap_lon($lon0);
 	$lat0= _clamp_lat($lat0);
-	my $min_x= ($lon0 + ($self->x_cnt/2) * $self->lon_step) / $self->lon_step;
-	my $min_y= ($lat0 + ($self->y_cnt/2) * $self->lat_step) / $self->lat_step;
-	return ($min_y % $self->y_cnt) * $self->x_cnt + ($min_x % $self->x_cnt)
+	my $min_x= ($lon0 + ($x_cnt/2) * $lon_step) / $lon_step;
+	my $min_y= ($lat0 + ($y_cnt/2) * $lat_step) / $lat_step;
+	return ($min_y % $y_cnt) * $x_cnt + ($min_x % $x_cnt)
 		if @_ <= 3;
 	$lon1= _wrap_lon($lon1); $lon1 += 360_000_000 if $lon1 < $lon0;
 	$lat1= _clamp_lat($lat1);
-	my $max_x= ($lon1 + ($self->x_cnt/2) * $self->lon_step) / $self->lon_step;
-	my $max_y= ($lat1 + ($self->y_cnt/2) * $self->lat_step) / $self->lat_step;
+	my $max_x= ($lon1 + ($x_cnt/2) * $lon_step) / $lon_step;
+	my $max_y= ($lat1 + ($y_cnt/2) * $lat_step) / $lat_step;
 	my @ids;
 	for (my $y= $min_y; $y <= $max_y; ++$y) {
 		for (my $x= $min_x; $x <= $max_x; ++$x) {
-			push @ids, ($y % $self->y_cnt) * $self->x_cnt + ($x % $self->x_cnt);
+			push @ids, ($y % $y_cnt) * $x_cnt + ($x % $x_cnt);
 		}
 	}
 	return @ids;
@@ -60,7 +39,6 @@ sub get_tile_polygon {
 	my ($self, $tile_id)= @_;
 	use integer;
 	my ($y, $x)= ($tile_id / $self->x_cnt, $tile_id % $self->x_cnt);
-	#printf "id=$tile_id  x=$x y=$y  x_cnt=%f y_cnt=%f\n", $self->x_cnt, $self->y_cnt;
 	my $lat0= _clamp_lat(($y - $self->y_cnt/2) * $self->lat_step);
 	my $lat1= _clamp_lat($lat0 + $self->lat_step);
 	my $lon0= _clamp_lon(($x - $self->x_cnt/2) * $self->lon_step);
