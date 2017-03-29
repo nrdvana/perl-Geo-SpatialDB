@@ -33,12 +33,12 @@ has tile_count => ( is => 'lazy', builder => sub { use integer; my $self= shift;
 sub get_tiles_for_rect {
 	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
 	use integer;
-	$lon0 += 360_000_000 while $lon0 < 0;
-	$lon1 += 360_000_000 while $lon1 < $lon0;
+	$lon0 += 360_000_000 while $lon0 < 180_000_000;
 	my $min_x= $lon0 / $self->lon_step;
 	my $min_y= ($lat0 + ($self->y_cnt/2) * $self->lat_step) / $self->lat_step;
 	return $min_y * $self->x_cnt + $min_x
 		if @_ <= 3;
+	$lon1 += 360_000_000 while $lon1 < $lon0;
 	my $max_x= $lon1 / $self->lon_step;
 	my $max_y= ($lat1 + ($self->y_cnt/2) * $self->lat_step) / $self->lat_step;
 	my @ids;
@@ -58,7 +58,7 @@ sub get_tile_polygon {
 	my ($self, $tile_id)= @_;
 	use integer;
 	my ($y, $x)= ($tile_id / $self->x_cnt, $tile_id % $self->x_cnt);
-	printf "id=$tile_id  x=$x y=$y  x_cnt=%f y_cnt=%f\n", $self->x_cnt, $self->y_cnt;
+	#printf "id=$tile_id  x=$x y=$y  x_cnt=%f y_cnt=%f\n", $self->x_cnt, $self->y_cnt;
 	my $lat0= ($y - $self->y_cnt/2) * $self->lat_step;
 	my $lat1= $lat0 + $self->lat_step;
 	my $lon0= ($x - $self->x_cnt/2) * $self->lon_step;

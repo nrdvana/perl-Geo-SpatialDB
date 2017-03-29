@@ -16,42 +16,55 @@ my $mapper= $module->new(@ARGV);
 
 $glx->target; # force lazy init
 my $dlist= build_polygons($mapper);
-my ($start_t, $n, $r)= (time, 0, 0);
+my ($start_t, $n, $r, $tlat, $tlon)= (time, 0, 0, -80_000_000, 0);
 while (1) {
 	$glx->begin_frame;
 	glLoadIdentity();
 	glTranslated(0,0,-2);
-	glRotated($r += 1, 0,1,0);
-	glRotated(90, 1,0,0);
+	glRotated(-87, 1,0,0);      # vertical Z axis
+	glRotated($r += 1, 0,0,1);  # spin globe
+	glColor4d(1,1,1,.7);
 	glCallList($dlist);
+	glColor4d(.7,1,.7,1);
+	for ($mapper->get_tiles_for_rect($tlat, $tlon)) {
+		printf "%.2f,%.2f: tile=$_\n", $tlat*.000001, $tlon*.000001;
+		glBegin(GL_POLYGON); plot_tile($_); glEnd();
+	}
+	glRotated($tlon * .000001, 0,0,1);
+	glRotated($tlat * .000001, 0,1,0);
+	glBegin(GL_LINES); glVertex3d(0,0,0); glVertex3d(1,0,0); glEnd();
 	$glx->end_frame;
 	++$n;
+	$tlon += 330_000;
+	if ($tlon > 360_000_000) { $tlon= 0; $tlat += 10_000_000; }
 	if (time != $start_t) { print "$n fps\n"; $n= 0; ++$start_t; }
 }
 
 sub build_polygons {
-	my $mapper= shift;
 	$mapper->tile_count < 100000
 		or die "Too many verticies to render (".$mapper->tile_count.")\n";
 	
-	glColor4d(1,1,1,1);
 	glDisable(GL_TEXTURE_2D);
 	my $list_id= glGenLists(1);
 	glNewList($list_id, GL_COMPILE);
-	my ($x, $y, $z);
 	for (my $i= $mapper->tile_count; $i--;) {
-		my @pts= $mapper->get_tile_polygon($i);
 		glBegin(GL_LINE_LOOP);
-		while (@pts) {
-			printf("%7.2f,%7.2f ", $pts[1]*.000001, $pts[0]*.000001);
-			($x, $y, $z)= spherical_to_cartesian(1, deg2rad($pts[1]*.000001), deg2rad($pts[0]*.000001 + 90));
-			printf(" (%5.2f,%5.2f,%5.2f) ", $x, $y, $z);
-			glVertex3d($x, $y, $z);
-			splice(@pts, 0, 2);
-		}
-		print("\n");
+		plot_tile($i, 1);
 		glEnd();
 	}
 	glEndList();
 	return $list_id;
+}
+
+sub plot_tile {
+	my ($tile_id, $debug)= @_;
+	my @pts= $mapper->get_tile_polygon($tile_id);
+	my ($lat, $lon, $x, $y, $z);
+	while (@pts) {
+		($lat, $lon)= (shift(@pts) * .000001, shift(@pts) * .000001);
+		($x, $y, $z)= spherical_to_cartesian(1, deg2rad($lon), deg2rad(90 - $lat));
+		printf("%7.2f,%7.2f (%5.2f,%5.2f,%5.2f)  ", $lat, $lon, $x, $y, $z) if $debug;
+		glVertex3d($x, $y, $z);
+	}
+	print "\n" if $debug;
 }
