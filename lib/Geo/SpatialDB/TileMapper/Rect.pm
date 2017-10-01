@@ -1,62 +1,64 @@
 package Geo::SpatialDB::TileMapper::Rect;
-use Moo;
+use Moo 2;
 
-has lat_step   => ( is => 'ro', required => 1 );
-has lon_step   => ( is => 'ro', required => 1 );
-has y_cnt      => ( is => 'lazy', builder => sub { use integer; my $self= shift; 2 * ((89_999_999 + $self->lat_step) / $self->lat_step); } );
-has x_cnt      => ( is => 'lazy', builder => sub { use integer; my $self= shift; 2 * ((179_999_999 + $self->lon_step) / $self->lon_step); } );
-has tile_count => ( is => 'lazy', builder => sub { use integer; my $self= shift; $self->y_cnt * $self->x_cnt; } );
+has lat_divs   => ( is => 'ro', required => 1 );
+has lon_divs   => ( is => 'ro', required => 1 );
 
-sub get_tiles_for_rect {
+sub tiles_in_range {
 	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
-	use integer;
-	my ($x_cnt, $lon_step, $y_cnt, $lat_step)=
-		( $self->x_cnt, $self->lon_step, $self->y_cnt, $self->lat_step );
-	$lon0= _wrap_lon($lon0);
-	$lat0= _clamp_lat($lat0);
-	my $min_x= ($lon0 + ($x_cnt/2) * $lon_step) / $lon_step;
-	my $min_y= ($lat0 + ($y_cnt/2) * $lat_step) / $lat_step;
-	return ($min_y % $y_cnt) * $x_cnt + ($min_x % $x_cnt)
+	my ($lat_divs, $lon_divs)= ($self->lat_divs, $self->lon_divs);
+	# clamp latitude
+	$lat0= -0x10000000 if $lat0 < -0x10000000;
+	$lat0=  0x10000000 if $lat0 >  0x10000000;
+	# wrap longitude, and shift so any partial div is opposite prime meridian
+	$lon0= ($lon0 + 0x20000000) & 0x3FFFFFFF;
+	my $lat_idx= int(($lat0+0x10000000) * $lat_divs / 2**29);
+	my $lon_idx= int($lon0 * $lon_divs / 2**30);
+	return $lat_idx * $lon_divs + $lon_idx
 		if @_ <= 3;
-	$lon1= _wrap_lon($lon1); $lon1 += 360_000_000 if $lon1 < $lon0;
-	$lat1= _clamp_lat($lat1);
-	my $max_x= ($lon1 + ($x_cnt/2) * $lon_step) / $lon_step;
-	my $max_y= ($lat1 + ($y_cnt/2) * $lat_step) / $lat_step;
+	# clamp end lat
+	$lat1= -0x10000000 if $lat1 < -0x10000000;
+	$lat1=  0x10000000 if $lat1 >  0x10000000;
+	# wrap end longitude, and shift so any partial div is opposite prime meridian
+	$lon1= ($lon1 + 0x20000000) & 0x3FFFFFFF;
+	# latitude span is positive or zero
+	my $lat_idx_end= int(($lat1 + 0x10000000) * $lat_divs / 2**29);
+	# longitude might wrap globe, or be single point.
+	# If lon end tile same as lon start tile, determine
+	# full circle vs. single tile based on $lon1 < $lon0
+	my $lon_idx_end= int($lon1 * $lon_divs / 2**30);
+	$lon_idx_end-- if $lon_idx_end == $lon_idx?
+		$lon1 < $lon0 # cause a wrap if caller requested full-globe
+		: int($lon_idx_end * 2**30 / $lon_divs) == $lon1; # don't include end just because boundary touched
+	# need to wrap
+	$lon_idx_end+= $lon_divs if $lon_idx_end < $lon_idx;
 	my @ids;
-	for (my $y= $min_y; $y <= $max_y; ++$y) {
-		for (my $x= $min_x; $x <= $max_x; ++$x) {
-			push @ids, ($y % $y_cnt) * $x_cnt + ($x % $x_cnt);
+	for my $lat ($lat_idx .. $lat_idx_end) {
+		for my $lon ($lon_idx .. $lon_idx_end) {
+			push @ids, $lat * $lon_divs + ($lon % $lon_divs);
 		}
 	}
 	return @ids;
 }
 
-sub get_tile_at {
-	return shift->get_tiles_for_rect(@_);
+sub tile_at {
+	return shift->get_tiles_in_range(@_);
 }
 
-sub get_tile_polygon {
+sub tile_polygon {
 	my ($self, $tile_id)= @_;
-	use integer;
-	my ($y, $x)= ($tile_id / $self->x_cnt, $tile_id % $self->x_cnt);
-	my $lat0= _clamp_lat(($y - $self->y_cnt/2) * $self->lat_step);
-	my $lat1= _clamp_lat($lat0 + $self->lat_step);
-	my $lon0= _clamp_lon(($x - $self->x_cnt/2) * $self->lon_step);
-	my $lon1= _clamp_lon($lon0 + $self->lon_step);
-	return ($lat0,$lon0,  $lat1,$lon0,  $lat1,$lon1,  $lat0,$lon1);
-}
-
-sub _clamp_lat {
-	$_[0] < -90_000_000? -90_000_000 : $_[0] > 90_000_000? 90_000_000 : $_[0]
-}
-sub _clamp_lon {
-	$_[0] < -180_000_000? -180_000_000 : $_[0] > 180_000_000? 180_000_000 : $_[0]
-}
-sub _wrap_lon {
-	use integer;
-	$_[0] < -180_000_000? (($_[0] - 180_000_000) % 360_000_000)+180_000_000
-		: $_[0] > 180_000_000? (($_[0] + 180_000_000) % 360_000_000) - 180_000_000
-		: $_[0]
+	my ($lat_divs, $lon_divs)= ($self->lat_divs, $self->lon_divs);
+	my ($lat_idx, $lon_idx);
+	{ use integer;
+		($lat_idx, $lon_idx)= ($tile_id / $lon_divs, $tile_id % $lon_divs)
+	}
+	print STDERR "lat_idx=$lat_idx, lon_idx=$lon_idx\n";
+	my $lat0= int($lat_idx * 2**29 / $lat_divs) - 0x10000000;
+	my $lon0= int($lon_idx * 2**30 / $lon_divs) - 0x20000000;
+	my $lat1= int(($lat_idx+1) * 2**29 / $lat_divs) - 0x10000000;
+	my $lon1= (int(($lon_idx+1) * 2**30 / $lon_divs) & 0x3FFFFFFF) - 0x20000000;
+	$lat1= 0x20000000 if $lat1 > 0x20000000;
+	return ($lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1,  $lat1,$lon0);
 }
 
 1;
