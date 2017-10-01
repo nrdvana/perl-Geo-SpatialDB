@@ -1,1 +1,4 @@
-t/tmp/
+/t/tmp/
+/Geo-SpatialDB-*
+/devdata
+/.build
