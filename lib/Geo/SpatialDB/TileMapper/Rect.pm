@@ -1,4 +1,4 @@
-package Geo::SpatialDB::TileMap::Rect;
+package Geo::SpatialDB::TileMapper::Rect;
 use Moo;
 
 has lat_step   => ( is => 'ro', required => 1 );
