@@ -8,33 +8,30 @@ sub tiles_in_range {
 	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
 	my ($lat_divs, $lon_divs)= ($self->lat_divs, $self->lon_divs);
 	# clamp latitude
-	$lat0= -0x10000000 if $lat0 < -0x10000000;
-	$lat0=  0x10000000 if $lat0 >  0x10000000;
-	# wrap longitude, and shift so any partial div is opposite prime meridian
-	$lon0= ($lon0 + 0x20000000) & 0x3FFFFFFF;
-	my $lat_idx= int(($lat0+0x10000000) * $lat_divs / 2**29);
-	my $lon_idx= int($lon0 * $lon_divs / 2**30);
-	return $lat_idx * $lon_divs + $lon_idx
+	$lat0=  90 if $lat0 >  90;
+	$lat0= -90 if $lat0 < -90;
+	my $lat_idx0= int((90-$lat0) * $lat_divs / 180);
+	my $lon_idx0= $lon0/360 * $lon_divs;
+	$lon_idx0+= $lon_divs*(1+ int(-$lon_idx0/$lon_divs)) if $lon_idx0 < 0;
+	$lon_idx0= $lon_idx0 % $lon_divs;
+	return $lat_idx0 * $lon_divs + $lon_idx0
 		if @_ <= 3;
 	# clamp end lat
-	$lat1= -0x10000000 if $lat1 < -0x10000000;
-	$lat1=  0x10000000 if $lat1 >  0x10000000;
-	# wrap end longitude, and shift so any partial div is opposite prime meridian
-	$lon1= ($lon1 + 0x20000000) & 0x3FFFFFFF;
-	# latitude span is positive or zero
-	my $lat_idx_end= int(($lat1 + 0x10000000) * $lat_divs / 2**29);
+	$lat1=  90 if $lat1 >  90;
+	$lat1= -90 if $lat1 < -90;
+	my $lat_idx1= int((90-$lat1) * $lat_divs / 180);
+	my $lon_idx1= $lon1/360 * $lon_divs;
+	$lon_idx1+= $lon_divs*(1+ int(-$lon_idx1/$lon_divs)) if $lon_idx1 < 0;
+	$lon_idx1= $lon_idx1 % $lon_divs;
 	# longitude might wrap globe, or be single point.
 	# If lon end tile same as lon start tile, determine
 	# full circle vs. single tile based on $lon1 < $lon0
-	my $lon_idx_end= int($lon1 * $lon_divs / 2**30);
-	$lon_idx_end-- if $lon_idx_end == $lon_idx?
-		$lon1 < $lon0 # cause a wrap if caller requested full-globe
-		: int($lon_idx_end * 2**30 / $lon_divs) == $lon1; # don't include end just because boundary touched
+	$lon_idx1-- if $lon_idx1 == $lon_idx0 and $lon1 < $lon0; # cause a wrap if caller requested full-globe
 	# need to wrap
-	$lon_idx_end+= $lon_divs if $lon_idx_end < $lon_idx;
+	$lon_idx1+= $lon_divs if $lon_idx1 < $lon_idx0;
 	my @ids;
-	for my $lat ($lat_idx .. $lat_idx_end) {
-		for my $lon ($lon_idx .. $lon_idx_end) {
+	for my $lat ($lat_idx1 .. $lat_idx0) {
+		for my $lon ($lon_idx0 .. $lon_idx1) {
 			push @ids, $lat * $lon_divs + ($lon % $lon_divs);
 		}
 	}
@@ -42,7 +39,7 @@ sub tiles_in_range {
 }
 
 sub tile_at {
-	return shift->get_tiles_in_range(@_);
+	return shift->tiles_in_range(@_);
 }
 
 sub tile_polygon {
@@ -52,13 +49,13 @@ sub tile_polygon {
 	{ use integer;
 		($lat_idx, $lon_idx)= ($tile_id / $lon_divs, $tile_id % $lon_divs)
 	}
-	print STDERR "lat_idx=$lat_idx, lon_idx=$lon_idx\n";
-	my $lat0= int($lat_idx * 2**29 / $lat_divs) - 0x10000000;
-	my $lon0= int($lon_idx * 2**30 / $lon_divs) - 0x20000000;
-	my $lat1= int(($lat_idx+1) * 2**29 / $lat_divs) - 0x10000000;
-	my $lon1= (int(($lon_idx+1) * 2**30 / $lon_divs) & 0x3FFFFFFF) - 0x20000000;
-	$lat1= 0x20000000 if $lat1 > 0x20000000;
-	return ($lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1,  $lat1,$lon0);
+	my $lat1= 90 - $lat_idx/$lat_divs*180;
+	my $lon0= $lon_idx/$lon_divs*360;
+	my $lat0= 90 - ($lat_idx+1)/$lat_divs*180;
+	my $lon1= ($lon_idx+1)/$lon_divs*360;
+	$lon0 -= 360 if $lon0 >= 180;
+	$lon1 -= 360 if $lon1 >= 180;
+	return ($lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1);
 }
 
 1;
