@@ -44,7 +44,7 @@ C<$resolution * 2> degrees latitude.
 =cut
 
 sub features_at_resolution {
-	my $resolution= shift;
+	my ($self, $resolution)= @_;
 	# I lied.   Just return every point along the path with a radius
 	# of the distance to the next/previous point.
 	# TODO: actually implement algorithm of following the path.

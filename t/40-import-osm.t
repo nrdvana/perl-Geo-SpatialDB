@@ -14,7 +14,7 @@ make_path($tmpdir or die "Can't create $tmpdir");
 
 my $importer= Geo::SpatialDB::Import::OpenStreetMap->new();
 
-package Test::Dummy::SpatialDB {
+package Test::Mock::SpatialDB {
 	use Moo 2;
 	use Log::Any '$log';
 	
@@ -26,9 +26,8 @@ package Test::Dummy::SpatialDB {
 	sub add_entity {
 		my ($self, $entity)= @_;
 		$log->debugf("%s", $entity);
-		$self->{location_count}++ if $entity->isa('Geo::SpatialDB::Location');
-		$self->{route_count}++    if $entity->isa('Geo::SpatialDB::RouteSegment');
-		$self->{area_count}++     if $entity->isa('Geo::SpatialDB::Area');
+		$self->{location_count}++ if $entity->isa('Geo::SpatialDB::Entity::Location');
+		$self->{route_count}++    if $entity->isa('Geo::SpatialDB::Entity::RouteSegment');
 		push @{ $self->{entities} }, $entity;
 	}
 };
@@ -39,11 +38,10 @@ $importer->tmp_storage->commit;
 $importer->preprocess;
 $importer->tmp_storage->commit;
 
-my $sdb= Test::Dummy::SpatialDB->new;
+my $sdb= Test::Mock::SpatialDB->new;
 $importer->generate_roads($sdb);
 
 is( $sdb->location_count, 358, 'locations' );
 is( $sdb->route_count,    237, 'routes' );
-is( $sdb->area_count,       0, 'areas' );
 
 done_testing;

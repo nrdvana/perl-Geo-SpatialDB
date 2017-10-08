@@ -7,6 +7,9 @@ use File::Temp;
 use JSON;
 use Log::Any '$log';
 use Geo::SpatialDB::Storage;
+use Geo::SpatialDB::Entity::Location;
+use Geo::SpatialDB::Entity::Route;
+use Geo::SpatialDB::Entity::RouteSegment;
 use namespace::clean;
 
 # ABSTRACT: Import OpenStreetMap data as SpatialDB Entities
@@ -546,7 +549,7 @@ sub generate_roads {
 					my @names= grep { defined } $rel->{tag}{name}, $rel->{tag}{ref};
 					# TODO: keep only the keys we care about
 					if (@names || keys %{ $rel->{tag} }) {
-						$road= Geo::SpatialDB::Route::Road->new(
+						$road= Geo::SpatialDB::Entity::Route->new(
 							id       => $route_id,
 							type     => 'road.network',
 							names    => \@names,
