@@ -3,12 +3,10 @@ package Geo::SpatialDB::Import::OpenStreetMap;
 use Moo 2;
 use Carp;
 use XML::Parser;
-use Geo::SpatialDB::Location;
-use Geo::SpatialDB::Path;
-use Geo::SpatialDB::RouteSegment;
-use Geo::SpatialDB::Route::Road;
-use Geo::SpatialDB::Area;
+use File::Temp;
+use JSON::MaybeXS;
 use Log::Any '$log';
+use Geo::SpatialDB::Storage;
 use namespace::clean;
 
 # ABSTRACT: Import OpenStreetMap data as SpatialDB Entities
@@ -37,25 +35,71 @@ structures than a single Way can represent.
 
 =back
 
+Since these require significant processing to make them into usable objects,
+the first task is to parse all the XML files and store all the data in an
+indexed L</tmp_storage> database, via multiple calls to L</load_xml>.
+When this is done, call L</preprocess> to cross-reference all the relations
+so that i.e. a node know which Ways it is a part of in addition to the way
+knowing which nodes it is composed of.
+
+  my $imp= Geo::SpatialDB::Import::OpenStreetMap->new();
+  $imp->load_xml( $region_one_filename );
+  $imp->load_xml( $region_two_filename );
+  ...
+  $imp->preprocess;
+
+Once this pre-processed and indexed data is ready, you can begin importing
+Entities from it.  The methods "generate_*" methods each take a reference
+to the destination Geo::SpatialDB, and options about which sorts of object
+to import.
+
+=head1 ATTRIBUTES
+
+=head2 tmp_storage
+
+An instance of L<Geo::SpatialDB::Storage> that will be used to pre-process the
+OpenStreetMap data.  Crunching data for one of the regional US databases will
+require tens of gigabytes and several minutes of processing (or maybe hours with
+older hardware).  The default is to create a temp dir and initialize
+a new LMDB in it.  This will be deleted on completion of the script, which may
+be undesirable.  You should also use the fastest available storage engine.
+
+=head2 entity_id_prefix
+
+The IDs from the input willb e used directly, but if this causes a problem for
+your application you cna prefix them all with a string of your choosing.
+
+=head2 stats
+
+This holds information about the pre-processed temporary data.  It is also
+saved to the temporary storage, so it can persist across script runs if you
+are using persistent temp storage.
+
 =cut
 
-has tmp_storage      => is => 'lazy';
-has stats            => is => 'lazy';
-has latlon_precision => is => 'rw',   default => sub { 1_000_000 };
-has entity_id_prefix => is => 'rw';
+has tmp_storage      => ( is => 'lazy', init_arg => undef );
+has _tmp_storage_arg => ( is => 'rw', init_arg => 'tmp_storage' );
+has entity_id_prefix => ( is => 'rw' );
+has stats            => ( is => 'lazy' );
 
 sub _build_stats {
 	my $self= shift;
-	$self->tmp_storage->get('stats') // {};
+	$self->tmp_storage->get('stats') || {};
 }
 
 sub _build_tmp_storage {
-	require File::Temp;
-	require Geo::SpatialDB::Storage::LMDB_Storable;
-	return Geo::SpatialDB::Storage::LMDB_Storable->new(
-		path => File::Temp->newdir('osm-import-XXXXX'),
-		run_with_scissors => 1,
-	);
+	my $self= shift;
+	my $thing= $self->_tmp_storage_arg;
+	return $thing if ref($thing) and ref($thing)->isa('Geo::SpatialDB::Storage');
+	my %cfg= (!ref $thing or ref($thing) =~ /path/i)? ( path => $thing )
+		: (ref($thing) eq 'HASH')? %$thing
+		: defined $thing? croak("Can't coerce $thing to Storage instance")
+		: ();
+	$cfg{path}= File::Temp->newdir('geo-import-osm-XXXXX')
+		unless defined $cfg{path};
+	$cfg{run_with_scissors}= 1;
+	$cfg{create}= 'auto';
+	Geo::SpatialDB::Storage::coerce(\%cfg);
 }
 
 sub DESTROY {
@@ -67,10 +111,40 @@ sub DESTROY {
 	delete $self->{tmp_storage};
 }
 
+=head1 METHODS
+
+=head2 load_xml
+
+  $importer->load_xml( $filename,  %options );
+  $importer->load_xml( $handle,    %options );
+
+When using a filename, if the suffix is '.bz2' or '.gz' it will automatically
+pass through the appropriate decompressor.  If it is a file handle, it will
+be used directly and assumed to be XML.
+
+Can throw exceptions on read or XML parse errors, but currently it just
+ignores any tag it doesn't recognize.  The data is loaded into L</tmp_storage>
+and the statistics are collected in L</stats>.
+
+Options:
+
+=over
+
+=item progress
+
+Set to an instance of L<Log::Progress> to get progress updates on how much
+of the input file has been read.  This may be somewhat inaccurate since it
+reports the progress of reading blocks not the progress of parsing them.
+
+=back
+
+Returns C<$self>, for chaining.
+
+=cut
+
 sub load_xml {
 	my ($self, $source)= @_;
 	my @stack;
-	my $prec= $self->latlon_precision;
 	my $stats= $self->stats;
 	my $stor= $self->tmp_storage;
 	XML::Parser->new( Handlers => {
@@ -86,7 +160,7 @@ sub load_xml {
 					if @stack;
 			}
 			elsif ($el eq 'nd') {
-				push @{ $stack[-1]{nd} }, $obj->{ref}
+				push @{ $stack[-1]{nd} }, $obj->{ref}+0
 					if @stack;
 			}
 			elsif ($el eq 'member') {
@@ -94,9 +168,9 @@ sub load_xml {
 					if @stack;
 			}
 			elsif ($el eq 'node') {
-				# Convert lat/lon to microdegree integers
-				my $lat= int( $obj->{lat} * $prec );
-				my $lon= int( $obj->{lon} * $prec );
+				# Convert lat/lon to microdegree integers, to save space when encoded
+				my $lat= int( $obj->{lat} * 1_000_000 );
+				my $lon= int( $obj->{lon} * 1_000_000 );
 				$stats->{node}++;
 				$stats->{node_tag}{$_}++ for keys %{ $obj->{tag} // {} };
 				$stor->put('n'.$obj->{id}, [ $lat, $lon, [], $obj->{tag} ]);
@@ -120,6 +194,14 @@ sub load_xml {
 	$stor->commit;
 	$self;
 }
+
+=head2 preprocess
+
+After loading XML data, the entities need cross-referenced.  call this method
+to perform that step.  If L</progress> is set, this routine will log the
+progress as it runs with a sub-task ID of C<"preprocess">.
+
+=cut
 
 sub preprocess {
 	my $self= shift;
@@ -187,6 +269,96 @@ sub preprocess {
 	$stor->put(stats => $stats);
 	$stor->put(preprocessed => 1);
 	$stor->commit;
+}
+
+=head2 dump_json
+
+  $importer->dump_json;  # default is STDOUT
+  $importer->dump_json( $file_handle );
+
+Dump the entire contents of the temporary cache as a json object, with each
+entry (node, way, or relation) written on its own line, for improved ability
+to browse or manipulate the stream.
+
+Note that the data exported might expose some implementation details of this
+module, but I will attempt to preserve the structure as much as possible.
+
+=cut
+
+sub dump_json {
+	my ($self, $fh)= @_;
+	$fh ||= \*STDOUT;
+
+	my $json= JSON::MaybeXS->new->canonical;
+	# want to export UTF-8 unless user selected a different encoding for the file handle
+	my @layers= PerlIO::get_layers($fh, output => 1);
+	$json->utf8(1) unless grep { /encoding|utf/i } @layers;
+
+	my $iter= $self->tmp_storage->iterator;
+	my ($id, $entity, $prev);
+	print "{\n";
+	while (($id, $entity)= $iter->()) {
+		next unless ref $entity and $id =~ /^[nwr]\d/;
+		print ",\n" if $prev;
+		$prev= 1;
+		print qq{ "$id": }.$json->encode($entity);
+	}
+	print "\n}\n";
+}
+
+=head2 aggregate_tags
+
+  my $tags= $importer->aggregate_tags( %options );
+  # Options:
+  #   with_values => $bool
+  #   filter => { tag_name => qr/$value_regex/, ... }
+  
+  # Result when with_values => 0
+  {
+     $tag_name1 => $count1,
+     $tag_name2 => $count2,
+     ...
+  }
+
+  # Result when with_values => 1
+  {
+     $tag_name1 => { $tag_value1 => $count1, $tag_value2 => $count2, ... },
+     $tag_name2 => ...
+     ...
+  }
+
+This is a helpful diagnostic tool for searching through all indexed entities
+to learn what tags and what tag values are available.  By default, it only
+returns the tag names and their count, but you can also return the distinct
+values and their count. (but that gets large)
+
+To reduce the size of the result, you can filter which objects are included
+by specifying tags and regexes.  Only objects which have all those tags and
+tag values matching the regex will be aggregated.
+
+=cut
+
+sub aggregate_tags {
+	my ($self, %opts)= @_;
+	my $with_values= $opts{values};
+	my $filter= $opts{filter} || {};
+	my %tags;
+	my $iter= $self->tmp_storage->iterator;
+	my ($id, $entity);
+	ent: while (($id, $entity)= $iter->()) {
+		next unless ref $entity eq 'HASH';
+		my $tag= $entity->{tag};
+		next unless $tag and ref $tag eq 'HASH' and keys %$tag;
+		for (keys %$filter) {
+			next ent unless defined $tag->{$_} and $tag->{$_} =~ $filter->{$_};
+		}
+		if ($with_values) {
+			++$tags{$_}{$tag->{$_}} for keys %$tag;
+		} else {
+			++$tags{$_} for keys %$tag;
+		}
+	}
+	return \%tags;
 }
 
 sub generate_roads {
