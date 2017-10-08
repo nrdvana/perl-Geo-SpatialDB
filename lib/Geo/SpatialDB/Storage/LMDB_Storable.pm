@@ -3,7 +3,8 @@ package Geo::SpatialDB::Storage::LMDB_Storable;
 use Moo 2;
 use LMDB_File ':flags', ':cursor_op', ':error';
 use Storable 'freeze', 'thaw';
-sub _croak { require Carp; goto &Carp::croak }
+use Carp;
+use File::Path 'make_path';
 use namespace::clean;
 
 extends 'Geo::SpatialDB::Storage';
@@ -21,10 +22,14 @@ find something faster, I'd love to hear about it.
 
 =head2 path
 
-The path for the LMDB files.  If this is an existing directory, LMDB will be
-initialized in the standard manner.  But if it is a file (or missing) then we
-treat it as the database file itself, which means the directory must be
-writable in order for LMDB to create the lock file along side of it.
+The path for the LMDB files.  This must be a directory, and must be writeable
+unless L</readonly> is true.  The directory will be created if L</create> is
+C<'auto'> or C<1>.
+
+=head2 create
+
+Whether to create the database.  Value of '1' means it must not previously
+exist.  Value of 'auto' means create it unless it exists.
 
 =head2 readonly
 
@@ -50,9 +55,18 @@ has run_with_scissors => ( is => 'ro', default => sub { 0 } );
 
 sub BUILD {
 	my $self= shift;
+	
 	# Immediately try to access the DB so that errors get reported
 	# as soon as user creates the object
 	$self->get(0);
+}
+
+sub save_config {
+	my $self= shift;
+	$self->_write_config_file({
+		map { $_ => $self->$_ }
+		qw( readonly mapsize run_with_scissors )
+	});
 }
 
 sub DESTROY {
@@ -65,11 +79,17 @@ has _env => ( is => 'lazy' );
 sub _build__env {
 	my $self= shift;
 	my $path= $self->path;
+	if (!-d $path) {
+		$self->create or croak "Storage directory '$path' does not exist  (try create => 'auto')";
+		make_path($path) or croak "Can't create $path";
+		$self->save_config;
+	} elsif (($self->create||0) eq '1') {
+		croak "Storage directory '$path' already exists";
+	}
 	LMDB::Env->new("$path", {
 		mapsize => $self->mapsize,
 		flags   =>
-			(-d $path? 0 : MDB_NOSUBDIR)
-			| ($self->readonly? MDB_RDONLY : 0)
+			($self->readonly? MDB_RDONLY : 0)
 			| ($self->run_with_scissors? MDB_WRITEMAP|MDB_NOMETASYNC : 0)
 		}
 	);
@@ -136,7 +156,7 @@ sub put {
 		substr($v, 0, 1) eq $storable_magic
 			or die_invalid_assumption();
 	} else {
-		ord(substr($v, 0, 1)) > 0x1F or _croak("scalars must not start with control characters");
+		ord(substr($v, 0, 1)) > 0x1F or croak("scalars must not start with control characters");
 	}
 	$self->_db->put($k, $v);
 }
@@ -200,7 +220,7 @@ sub iterator {
 		$op= MDB_NEXT;
 		if ($ret) {
 			return if $ret == MDB_NOTFOUND;
-			die $LMDB_File::last_err
+			croak $LMDB_File::last_err
 		}
 		return $key unless wantarray;
 		$data= thaw($data) if substr($data, 0, 1) eq $storable_magic;

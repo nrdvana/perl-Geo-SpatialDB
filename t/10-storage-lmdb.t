@@ -9,10 +9,11 @@ use_ok 'Geo::SpatialDB::Storage::LMDB_Storable' or die;
 
 my $tmpdir= catdir($FindBin::RealBin, 'tmp', $FindBin::Script);
 remove_tree($tmpdir, { error => \my $ignored });
-make_path($tmpdir or die "Can't create $tmpdir");
 
 my $store= Geo::SpatialDB::Storage::LMDB_Storable->new(
-	path => $tmpdir
+	path => $tmpdir,
+	create => 'auto',
+	mapsize => 1024*1024, # because CPAN testers seems to limit memory allocation?
 );
 
 $store->put(a => 1);
