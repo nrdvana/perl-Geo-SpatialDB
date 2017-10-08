@@ -79,9 +79,9 @@ has _env => ( is => 'lazy' );
 sub _build__env {
 	my $self= shift;
 	my $path= $self->path;
-	if (!-d $path) {
-		$self->create or croak "Storage directory '$path' does not exist  (try create => 'auto')";
-		make_path($path) or croak "Can't create $path";
+	if ($self->_storage_dir_empty($path)) {
+		$self->create or croak "Storage directory '$path' not initialized  (try create => 'auto')";
+		-d $path or make_path($path) or croak "Can't create $path";
 		$self->save_config;
 	} elsif (($self->create||0) eq '1') {
 		croak "Storage directory '$path' already exists";
