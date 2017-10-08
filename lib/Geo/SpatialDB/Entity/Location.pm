@@ -1,4 +1,4 @@
-package Geo::SpatialDB::Location;
+package Geo::SpatialDB::Entity::Location;
 
 use Moo 2;
 use namespace::clean;
