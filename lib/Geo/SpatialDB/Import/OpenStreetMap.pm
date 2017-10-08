@@ -4,7 +4,7 @@ use Moo 2;
 use Carp;
 use XML::Parser;
 use File::Temp;
-use JSON::MaybeXS;
+use JSON;
 use Log::Any '$log';
 use Geo::SpatialDB::Storage;
 use namespace::clean;
@@ -201,6 +201,13 @@ After loading XML data, the entities need cross-referenced.  call this method
 to perform that step.  If L</progress> is set, this routine will log the
 progress as it runs with a sub-task ID of C<"preprocess">.
 
+Updates the following statistics:
+
+  stats->{preproc_relation}      # number of relations inspected
+  stats->{preproc_way}           # number of ways inspected
+  stats->{preproc_rewrite_way}   # number of ways that received new cross-reference
+  stats->{preproc_rewrite_node}  # number of nodes that received a new cross-reference
+
 =cut
 
 sub preprocess {
@@ -289,7 +296,7 @@ sub dump_json {
 	my ($self, $fh)= @_;
 	$fh ||= \*STDOUT;
 
-	my $json= JSON::MaybeXS->new->canonical;
+	my $json= JSON->new->canonical;
 	# want to export UTF-8 unless user selected a different encoding for the file handle
 	my @layers= PerlIO::get_layers($fh, output => 1);
 	$json->utf8(1) unless grep { /encoding|utf/i } @layers;
@@ -361,17 +368,56 @@ sub aggregate_tags {
 	return \%tags;
 }
 
+=head2 generate_roads
+
+  $import->generate_roads( $geo_db, %options );
+
+For each "road" in the L</tmp_storage> indexed OpenStreetMap data,
+write a L<road entity|Geo::SpatialDB::Entity::Route> to the given
+L<Geo::SpatialDB> instance.
+
+OpenStreetMap indicates a road as a Way with a tag of C<highway>.
+Specifically, the C<highway> values that appear to be navigable by car
+are:
+
+  motorway motorway_link rest_area trunk trunk_link primary primary_link
+  secondary secondary_link tertiary tertiary_link service residential
+  living_street road unclassified track
+
+but these are just my observation, and I'd love to have an official source
+confirm or expand this list.
+
+Options:
+
+=over
+
+=item type
+
+A hashref, where the keys are the values that might be seen in OpenStreetMap's
+C<"highway"> tag, and the values are the L<type of road entity|Geo::SpatialDB::Entity::Route/type>
+to create from it.
+
+=item progress
+
+An optional instance of L<Log::Progress> via which to report the progress of
+iterating the OpenStreetMap data.
+
+=back
+
+=cut
+
 sub generate_roads {
 	my ($self, $sdb, %opts)= @_;
 	$self->preprocess;
 	my $stor= $self->tmp_storage;
 	my $stats= $self->stats;
-	my $prefix= $self->entity_id_prefix // '';
+	my $prefix= $self->entity_id_prefix;
+	$prefix = '' unless defined $prefix;
+	my $progress= $opts{progress};
 	my $tmp_prefix= "~";
-	my ($progress_i, $progress_n, $progress_prev, $progress_ival)= (0, $stats->{way}, -1, 0.05);
-	
-	my $wanted_subtypes= $opts{type} // {
-		map { $_ => 1 } qw(
+
+	my $highway_type= $opts{type} || {
+		map { $_ => "rt.$_" } qw(
 			motorway motorway_link rest_area
 			trunk trunk_link
 			primary primary_link
@@ -380,21 +426,17 @@ sub generate_roads {
 			service residential living_street
 			road unclassified track )
 	};
-	
+
+	$progress->at(0, $stats->{way}) if $progress;
+
 	# Iterate every 'way' looking for ones with a 'highway' tag
-	my $i= $stor->iterator('w');
-	my ($way_id, $way);
-	while ((($way_id, $way)= $i->()) and $way_id =~ /^w/) {
-		if ($progress_i++ / $progress_n >= $progress_prev + $progress_ival) {
-			$log->info("progress: $progress_i/$progress_n");
-			$progress_prev= ($progress_i-1) / $progress_n;
-		}
-		
-		next unless $way->{tag}{highway} and $wanted_subtypes->{$way->{tag}{highway}};
-		
-		my $type= 'road.' . delete $way->{tag}{highway};
+	my ($iter, $way_id, $way)= $stor->iterator('w');
+	while ((($way_id, $way)= $iter->()) and $way_id =~ /^w/) {
+		next unless defined $way->{tag}{highway};
+		my $type= $highway_type->{ $way->{tag}{highway} };
+		next unless defined $type;
 		$stats->{types}{$type}++;
-		
+
 		# Delete all "tiger:" tags, for now.  (they're not very useful for my purposes)
 		delete $way->{tag}{$_} for grep { /^tiger:/ } keys %{ $way->{tag} };
 
@@ -417,7 +459,7 @@ sub generate_roads {
 				my $loc_id= sprintf("%sn%X", $prefix, $node_id);
 				my $loc= $stor->get("$tmp_prefix$loc_id");
 				if (!$loc) {
-					$loc= Geo::SpatialDB::Location->new(
+					$loc= Geo::SpatialDB::Entity::Location->new(
 						id   => $loc_id,
 						type => 'todo',
 						lat  => $node->[0],
@@ -444,7 +486,7 @@ sub generate_roads {
 		#	seq => \@path
 		#);
 		# TODO: There should be multiple of these created
-		my @segments= ( Geo::SpatialDB::RouteSegment->new(
+		my @segments= ( Geo::SpatialDB::Entity::RouteSegment->new(
 			id     => $seg_id,
 			type   => $type,
 			($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes'? (oneway => 1) : ()),
@@ -473,7 +515,7 @@ sub generate_roads {
 			if (@names || keys %{ $way->{tag} }) {
 				$stats->{gen_road}++;
 				my $route_id= sprintf("%sw%X", $prefix, substr($way_id,1));
-				$road= Geo::SpatialDB::Route::Road->new(
+				$road= Geo::SpatialDB::Entity::Route->new(
 					id       => $route_id,
 					type     => $type,
 					names    => \@names,
@@ -534,15 +576,21 @@ sub generate_roads {
 		$stats->{gen_road_seg}+= @segments;
 		$stats->{gen_road_seg_pts}+= scalar @path;
 	}
+	continue {
+		$progress->inc if $progress;
+	}
 	
 	# Now, all segments are imported, but the routes are in tmp storage.
 	# Copy them across.
-	$i= $stor->iterator($tmp_prefix);
+	my $n_routes= 0;
+	$iter= $stor->iterator($tmp_prefix);
 	my ($k, $v);
-	while (($k, $v)= $i->() and index($k, $tmp_prefix)==0) {
+	while (($k, $v)= $iter->() and index($k, $tmp_prefix)==0) {
 		$sdb->add_entity($v);
+		++$n_routes;
 	}
 	$stor->rollback;
+	return $n_routes;
 }
 
 sub generate_trails {
