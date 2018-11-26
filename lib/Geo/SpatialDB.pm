@@ -101,22 +101,7 @@ has zoom_levels      => is => 'rw', default => sub { [
 	[ 360*128, int(1_000_000/128) ],
 ] };
 has latlon_scale     => is => 'rw', default => sub { 1_000_000 };
-has storage          => is => 'lazy', coerce => \&_build_storage;
-
-sub _build_storage {
-	if (!$_[0] || ref($_[0]) eq 'HASH') {
-		my %cfg= %{ $_[0] // {} };
-		my $class= delete $cfg{CLASS} // 'LMDB_Storable';
-		$class= "Geo::SpatialDB::Storage::$class";
-		require_module($class);
-		$class->new(%cfg);
-	}
-	elsif ($_[0] && ref($_[0])->can('get')) {
-		$_[0]
-	} else {
-		_croak("Can't coerce $_[0] to Storage instance");
-	}
-}
+has storage          => is => 'rw', required => 1, coerce => \&Geo::SpatialDB::Storage::coerce;
 
 sub tile_for_lat_lon {
 	my ($self, $lat, $lon, $tile_udeg)= @_;
