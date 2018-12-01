@@ -167,24 +167,24 @@ sub _clip_line_segments {
 	my @result;
 	for (@$segments) {
 		my ($x0,$y0,$z0, $x1,$y1,$z1)= @$_;
-		printf STDERR "# (%9.5f,%9.5f,%9.5f) -> (%9.5f,%9.5f,%9.5f)\n", ($x0,$y0,$z0, $x1,$y1,$z1);
+		#printf STDERR "# (%9.5f,%9.5f,%9.5f) -> (%9.5f,%9.5f,%9.5f)\n", ($x0,$y0,$z0, $x1,$y1,$z1);
 		my ($in, $clipped)= (1, 0);
 		for (@$planes) {
 			my $d0= $x0*$_->[0] + $y0*$_->[1] + $z0*$_->[2];
 			my $d1= $x1*$_->[0] + $y1*$_->[1] + $z1*$_->[2];
-			printf STDERR "# plane = %9.5f x + %9.5f y + %9.5f z;  d0 = %9.5f  d1 = %9.5f\n", @$_, $d0, $d1;
+			#printf STDERR "# plane = %9.5f x + %9.5f y + %9.5f z;  d0 = %9.5f  d1 = %9.5f\n", @$_, $d0, $d1;
 			if (($d0 < 0) ne ($d1 < 0)) {
 				my $pos= $d0 / ($d0 - $d1);
 				($d0 < 0? ($x0, $y0, $z0) : ($x1, $y1, $z1))=
 					($x0+($x1-$x0)*$pos, $y0+($y1-$y0)*$pos, $z0+($z1-$z0)*$pos);
 				$clipped= 1;
-				printf STDERR "# clipped at pos= %9.5f\n", $pos;
-				printf STDERR "# (%9.5f,%9.5f,%9.5f) -> (%9.5f,%9.5f,%9.5f)\n", ($x0,$y0,$z0, $x1,$y1,$z1);
+				#printf STDERR "# clipped at pos= %9.5f\n", $pos;
+				#printf STDERR "# (%9.5f,%9.5f,%9.5f) -> (%9.5f,%9.5f,%9.5f)\n", ($x0,$y0,$z0, $x1,$y1,$z1);
 			}
 			elsif ($d0 < 0) {
 				# Line begins and ends on wrong side of plane
 				$in= 0;
-				printf STDERR "# eliminated\n";
+				#printf STDERR "# eliminated\n";
 				last;
 			}
 		}
@@ -192,6 +192,59 @@ sub _clip_line_segments {
 			if $in;
 	}
 	return \@result;
+}
+
+sub _clip_triangles {
+	my ($self, $triangles, $planes)= @_;
+	my @result= @$triangles;
+	for my $plane (@$planes) {
+		@result= map $self->_clip_triangle_to_plane($_, $plane), @result;
+	}
+	return \@result;
+}
+
+sub _clip_triangle_to_plane {
+	my ($self, $triangle, $plane)= @_;
+	my @d= map { $_->[0]*$plane->[0] + $_->[1]*$plane->[1] + $_->[2]*$plane->[2] }
+		@$triangle;
+	# Are all vertices on the same side of the plane?
+	if (($d[0] < 0) eq ($d[1] < 0) and ($d[1] < 0) eq ($d[2] < 0)) {
+		return $d[0] < 0? () : $triangle;
+	}
+	# Else it crosses the plane
+	my $prev= 2;
+	my $out= $d[2] < 0;
+	my @vertices;
+	for (0..2) {
+		if ($out && $d[$_] < 0) { # both out, no vertex
+		}
+		elsif (!$out && $d[$_] >= 0) { # both in, queue next
+			push @vertices, $triangle->[$_];
+		}
+		elsif ($d[$_] > 0 or $d[$prev] > 0) { # line crosses plane
+			my $pos= $d[$prev] / ($d[$prev] - $d[$_]);
+			my $next= $triangle->[$_];
+			my @pt= @{$triangle->[$prev]};
+			$pt[$_]= $pt[$_]+($next->[$_]-$pt[$_])*$pos
+				for 0..4;
+			push @vertices, $out? ( \@pt, $next ) : ( \@pt );
+			$out= $d[$_] < 0;
+		}
+		$prev= $_;
+	}
+	if (@vertices == 3) {
+		return \@vertices;
+	}
+	# If we ended up with 4 vertices, return two triangles
+	elsif (@vertices == 4) {
+		return (
+			[ $vertices[0], $vertices[1], $vertices[2] ],
+			[ $vertices[2], $vertices[3], $vertices[0] ],
+		);
+	}
+	else { # not enough vertices inside plane
+		return ();
+	}
 }
 
 sub _cartesian_path_to_polygons {

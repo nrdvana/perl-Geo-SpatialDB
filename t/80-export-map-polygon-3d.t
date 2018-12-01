@@ -97,6 +97,54 @@ sub test_clip_line_segments {
 	done_testing;
 }
 
+subtest clip_triangle_to_plane => \&test_clip_triangle_to_plane;
+sub test_clip_triangle_to_plane {
+	my @tests= (
+		[ 'inside',
+			[ [ 1, 1, 1, 1, 1 ], [ 1, 0, 0, 1, 0 ], [ 1, 0, 1, 0, 1 ] ],
+			[ 1, 0, 0 ],
+			[ [ 1, 1, 1, 1, 1 ], [ 1, 0, 0, 1, 0 ], [ 1, 0, 1, 0, 1 ] ],
+		],
+		[ 'outside',
+			[ [ 1, 1, 1, 1, 1 ], [ 1, 0, 0, 1, 0 ], [ 1, 0, 1, 0, 1 ] ],
+			[ -1, 0, 0 ],
+			()
+		],
+		[ 'point-on-plane',
+			[ [ 0, 1, 0, 0, 0 ], [ 1, 1, 0, 0, 1 ], [ 0.1, 0, 0, 0, 0, ] ],
+			[ 1, 0, 0 ],
+			[ [ 0, 1, 0, 0, 0 ], [ 1, 1, 0, 0, 1 ], [ 0.1, 0, 0, 0, 0, ] ],
+		],
+		[ 'two-points-on-plane-outside',
+			[ [ 0, 1, 0, 0, 0 ], [ 1, 1, 0, 0, 1 ], [ 0, 0, 0, 0, 0, ] ],
+			[ -1, 0, 0 ],
+			()
+		],
+		[ 'two-points-outside',
+			[ [ -1, -1, 0, 0, 0 ], [ 0, 1, 0, .5, 1 ], [ 1, -1, 0, 1, 0 ] ],
+			[ 0, 1, 0 ],
+			[ [ -.5, 0, 0, .25, .5 ], [ 0, 1, 0, .5, 1 ], [ .5, 0, 0, .75, .5 ] ],
+		],
+		[ 'one-point-outside',
+			[ [ -1, 1, 0, 0, 1 ], [ 0, -1, 0, .5, 0 ], [ 1, 1, 0, 1, 1 ] ],
+			[ 0, 1, 0 ],
+			[ [ -1, 1, 0, 0, 1 ], [ -.5, 0, 0, .25, .5 ], [ .5, 0, 0, .75, .5 ] ],
+			[ [ 0.5, 0, 0, .75, .5 ], [ 1, 1, 0, 1, 1 ], [ -1, 1, 0, 0, 1 ] ],
+		]
+	);
+	for (@tests) {
+		my ($name, $triangle, $plane, @expected)= @$_;
+		try {
+			my @result= $ex->_clip_triangle_to_plane($triangle, $plane);
+			is_deeply( \@result, \@expected, $name )
+				or diag explain(\@expected), explain(\@result);
+		} catch {
+			diag $_;
+			false( $name );
+		};
+	}
+}
+
 #subtest path_to_xyz => \&test_path_to_xyz;
 sub test_path_to_xyz {
 	my $rseg= Geo::SpatialDB::RouteSegment->new(
