@@ -12,5 +12,13 @@ has oneway => ( is => 'rw' );
 has lanes  => ( is => 'rw' );
 has speed  => ( is => 'rw' );
 has routes => ( is => 'rw' );
+has endpoint_keys => ( is => 'lazy' );
+
+sub _build_endpoint_keys {
+	return [
+		sprintf('%.6lf,%.6lf', @{ $_[0]->path->seq->[0] }),
+		sprintf('%.6lf,%.6lf', @{ $_[0]->path->seq->[-1] }),
+	];
+}
 
 1;

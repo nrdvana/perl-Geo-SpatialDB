@@ -3,6 +3,8 @@ use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
 use Geo::SpatialDB;
 use Geo::SpatialDB::Export::MapPolygon3D;
+use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector';
+use Geo::SpatialDB::Export::MapPolygon3D::Polygon 'polygon';
 my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' }, latlon_scale => 1);
 my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
 
@@ -40,10 +42,8 @@ sub test_clip_plane_from_bbox {
 	);
 	for (@tests) {
 		my ($name, $bbox, @expected_planes)= @$_;
-		my @planes= $ex->_bbox_to_planes($bbox);
-		for (0..3) {
-			is_within( $planes[$_], $expected_planes[$_], 0.000000001, "$name - $_" );
-		}
+		my @planes= $map3d->_bbox_to_clip_planes($bbox);
+		is_within( \@planes, \@expected_planes, 0.000000001, $name );
 	}
 	
 	done_testing;
@@ -64,15 +64,15 @@ sub test_clip_line_segments {
 	);
 	for (@tests) {
 		my ($name, $line, $bbox, $clipped_line)= @$_;
-		my @planes= $ex->_bbox_to_planes($bbox);
-		my $clipped= $ex->_clip_line_segments([$line], \@planes);
+		my @planes= $map3d->_bbox_to_planes($bbox);
+		my $clipped= $map3d->_clip_line_segments([$line], \@planes);
 		is_within( (@$clipped? $clipped->[0] : []), $clipped_line, .000000001, $name );
 	}
 	
 	done_testing;
 }
 
-#subtest clip_triangle_to_plane => \&test_clip_triangle_to_plane;
+subtest clip_triangle_to_plane => \&test_clip_triangle_to_plane;
 sub test_clip_triangle_to_plane {
 	my @tests= (
 		[ 'inside',
@@ -104,35 +104,21 @@ sub test_clip_triangle_to_plane {
 			[ [ -1, 1, 0, 0, 1 ], [ 0, -1, 0, .5, 0 ], [ 1, 1, 0, 1, 1 ] ],
 			[ 0, 1, 0 ],
 			[ [ -1, 1, 0, 0, 1 ], [ -.5, 0, 0, .25, .5 ], [ .5, 0, 0, .75, .5 ] ],
-			[ [ 0.5, 0, 0, .75, .5 ], [ 1, 1, 0, 1, 1 ], [ -1, 1, 0, 0, 1 ] ],
+			[ [ -1, 1, 0, 0, 1 ], [ 0.5, 0, 0, .75, .5 ], [ 1, 1, 0, 1, 1 ] ],
 		]
 	);
 	for (@tests) {
 		my ($name, $triangle, $plane, @expected)= @$_;
+		$triangle= polygon(map vector(@$_), @$triangle);
+		$plane= vector(@$plane);
 		try {
-			my @result= $ex->_clip_triangle_to_plane($triangle, $plane);
-			is_deeply( \@result, \@expected, $name )
-				or diag explain(\@expected), explain(\@result);
+			$triangle->clip_to_planes($plane);
+			is_deeply( [ $triangle->as_triangles ], \@expected, $name )
+				or diag explain(\@expected), explain($triangle);
 		} catch {
 			diag $_;
 			false( $name );
 		};
-	}
-}
-
-#subtest road_side_vec => \&test_road_side_vec;
-sub test_road_side_vec {
-	my @tests= (
-		[ 'pos-y-gives-neg-x',
-			[ 0, 0, 1000000 ] => [ 0, 1, 1000000 ],
-			1, # width
-			[ -.5, 0, 0 ]
-		]
-	);
-	for (@tests) {
-		my ($name, $p0, $p1, $width, $vec)= @$_;
-		my @side_vec= $ex->_calc_side_vec($p0, $p1, $width);
-		is_within( \@side_vec, $vec, 0.000000001, $name );
 	}
 }
 
@@ -142,7 +128,7 @@ sub test_path_to_xyz {
 		id => 'foo',
 		path => [ [ 40.01, 70.01 ], [ 40.02, 70.02 ] ]
 	);
-	my $paths= $ex->generate_route_lines({ entities => { foo => $rseg } });
+	my $paths= $map3d->generate_route_lines({ entities => { foo => $rseg } });
 	is( $#$paths, 0, 'one path' );
 	is( $#{ $paths->[0][1] }, 1, 'two verticies' );
 	is_within(
@@ -154,30 +140,35 @@ sub test_path_to_xyz {
 		.000000001,
 		'vertex values',
 	);
-};
+}
 
-#subtest path_to_polygons => \&test_path_to_polygons;
+subtest path_to_polygons => \&test_path_to_polygons;
 sub test_path_to_polygons {
-	my $rseg= Geo::SpatialDB::RouteSegment->new(
-		id => 'foo',
-		path => [ [ 40.01, 70.01 ], [ 40.02, 70.02 ] ]
-	);
-	my $polys= $ex->generate_route_polygons({ entities => { foo => $rseg } }, road_width => .000001);
-	is( $#$polys, 0, 'one path' );
-	is( $#{ $polys->[0][1] }, 3, 'four verticies' );
-	is_within(
-		$polys->[0][1],
-		[
-			[ 0.261839245831099, 0.719785949238465, 0.642921765553541 ],
-			[ 0.261838020867602, 0.719787226748336, 0.64292083419273  ],
-			[ 0.261675269808106, 0.719726169596841, 0.643055436155635 ],
-			[ 0.261674044844609, 0.719727447106712, 0.643054504794824 ]
+	my $ll2xyz= $map3d->_latlon_to_xyz_coderef;
+	my $lw= $map3d->lane_width/$map3d->earth_radius; # lane-width
+	my @tests= (
+		[ 'single path segment',
+			[ [ 0,0 ], [ 0,0.000100 ] ],
+			[[
+				[ 1, 0, $lw, 0, 0 ],
+				[ 1, 0, -$lw, 1, 0 ],
+				vector($ll2xyz->(0, 0.0001))->add([ 0, 0,-$lw ])->set_st(1,3.70649755),
+				vector($ll2xyz->(0, 0.0001))->add([ 0, 0, $lw ])->set_st(0,3.70649755),
+			]]
 		],
-		.000000001,
-		'vertex values'
 	);
-};
+	for (@tests) {
+		my ($name, $path, $expected)= @$_;
+		my $rseg= Geo::SpatialDB::RouteSegment->new(
+			lanes => 2,
+			path => Geo::SpatialDB::Path->new( id => 0, seq => $path ),
+		);
+		my $polys= $map3d->_generate_route_segment_polygons($rseg);
+		is( scalar @$polys, scalar @$expected, "$name - polygon count" );
+		is_within( $polys, $expected, 0.00000001, "$name - polygons" );
+	}
+}
 
-undef $ex; undef $sdb;
+undef $map3d; undef $sdb;
 
 done_testing;

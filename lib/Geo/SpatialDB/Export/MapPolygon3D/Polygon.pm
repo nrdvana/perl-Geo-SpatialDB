@@ -51,7 +51,7 @@ sub clip_to_planes {
 	return $self;
 }
 
-sub to_triangles {
+sub as_triangles {
 	my $self= shift;
 	map $self->new($self->[0], $self->[$_-1], $self->[$_]), 2..$#$self;
 }

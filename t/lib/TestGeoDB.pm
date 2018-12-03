@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use Exporter;
 use File::Spec::Functions;
+use Scalar::Util 'reftype';
 use File::Path 'remove_tree','make_path';
 use Log::Any::Adapter 'TAP';
 our @EXPORT_OK= qw( get_fresh_tmpdir tmpdir new_geodb_in_tmpdir new_geodb_in_memory is_within );
@@ -55,7 +56,7 @@ sub is_within {
 
 sub _is_elem_within {
 	my ($elem, $actual, $expected, $tolerance)= @_;
-	if (ref $actual eq 'ARRAY' && ref $expected eq 'ARRAY') {
+	if (ref $actual && ref $expected && reftype($actual) eq 'ARRAY' && reftype($expected) eq 'ARRAY') {
 		if (@$actual == @$expected) {
 			my $err= 0;
 			for (0 .. $#$actual) {
@@ -70,7 +71,7 @@ sub _is_elem_within {
 		}
 	} elsif (!ref $actual && !ref $expected) {
 		if (abs($actual - $expected) > $tolerance) {
-			main::note( sprintf("element %s: abs(%.3e - %.3e) = %.3e",
+			main::note( sprintf("element %s: actual %.3e - expected %.3e = %.3e",
 				$elem, $actual, $expected, $actual-$expected));
 			return;
 		} else {

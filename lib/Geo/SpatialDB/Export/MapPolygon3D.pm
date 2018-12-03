@@ -6,6 +6,8 @@ use Try::Tiny;
 use Log::Any '$log';
 use Time::HiRes 'time';
 use Math::Trig 'deg2rad','spherical_to_cartesian', 'pip2';
+use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector';
+use Geo::SpatialDB::Export::MapPolygon3D::Polygon 'polygon';
 
 # ABSTRACT: Export map data as polygons in 3D
 
@@ -32,9 +34,20 @@ Galapagos west of Brazil is cartesian (0,-1,0).  (0,0) near the Gulf of Guinea i
 
 Reference to a Geo::SpatialDB from which the rendered entities came.
 
+=head2 earth_radius
+
+Earth radius, in Meters.  This helps when converting to/from the earth-radius unit vectors that
+this module returns for all cartesian coordinates.
+
+=head2 lane_width
+
+The width of one lane of road, in meters.
+
 =cut
 
 has spatial_db   => is => 'rw', required => 1;
+has earth_radius => is => 'rw', default => sub { 6371000 }; # meters
+has lane_width   => is => 'rw', default => sub { 3 }; # meters
 
 =head1 METHODS
 
@@ -60,6 +73,10 @@ sub latlon_to_cartesian {
 	map { $latlon_to_xyz->($_) } @_;
 }
 
+sub calc_road_width {
+	my ($self, $route_segment)= @_;
+	$route_segment->lanes * $self->lane_width / $self->earth_radius;
+}
 
 sub generate_route_lines {
 	my ($self, $geo_search_result, %opts)= @_;
@@ -103,22 +120,93 @@ sub generate_route_polygons {
 	my ($self, $geo_search_result, %opts)= @_;
 	my @quads;
 	my $cb= $opts{callback} // sub { push @quads, [ @_ ] };
-	my $road_width= $opts{road_width} // $self->earth_radius * 1/3000000;
-	my $latlon_clip= $opts{latlon_clip};
-	my $plane_clip= $latlon_clip && $self->_latlon_clip_to_plane_clip($latlon_clip);
-	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
-	for my $ent (grep values %{ $geo_search_result->{entities} }) {
-		if ($ent->isa('Geo::SpatialDB::RouteSegment')) {
-			my $path= $ent->path
-				or next;
-			# TODO: option to determine road width per road type
-			$cb->($ent, $self->_cartesian_path_to_polygons($road_width, $plane_clip,
-					[ map { $latlon_to_xyz->($_) } @$_ ]
-				))
-				for $latlon_clip? @{ $self->_latlon_clip($latlon_clip, $path) } : $path;
+	my @plane_clip= $opts{latlon_clip}? $self->_bbox_to_planes($opts{latlon_clip}) : ();
+	my @segments;
+	my %xnodes; # points-of-intersection
+	# Need to know all intersections of route segments, in order to render the intersections correctly
+	for my $ent (values %{ $geo_search_result->{entities} }) {
+		# route segments must have more than one vertex for any of the rest of the code to work
+		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$_->path->seq} > 1) {
+			push @segments, $ent;
+			push @{ $xnodes{$_} }, $ent for $ent->endpoint_keys;
 		}
 	}
-	\@quads;
+	# Now render polygons for each route segment
+	my $polygons= [];
+	for (@segments) {
+		push @$polygons, $self->_generate_route_segment_polygons($_,
+			src_branches => $xnodes{$_->endpoint_keys->[0]},
+			dst_branches => $xnodes{$_->endpoint_keys->[1]},
+		);
+	}
+	# Then clip polygons to the BBox
+	$polygons= $self->_clip_triangles($polygons, \@plane_clip)
+		if @plane_clip;
+	return $polygons;
+}
+
+sub _generate_route_segment_polygons {
+	my ($self, $segment, $plot_state)= @_;
+	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
+	my @path= map vector($latlon_to_xyz->(@$_)), @{ $segment->path->seq };
+	my $width_2= $self->calc_road_width($segment) * .5;
+	my @polygons;
+	my ($t_pos, $t_scale, $clip_plane, $clip_end, $prev_poly)=
+		@{$plot_state}{'t_pos','t_scale','clip_start','clip_end','prev_poly'};
+	$path[0]->set_st(0.5, $t_pos || 0);
+	$t_scale ||= 1/($self->lane_width/$self->earth_radius);
+	my $prev_side_unit;
+	for (1..$#path) {
+		my ($p0, $p1)= @path[$_-1, $_];
+		my $vec= $p1->clone->sub($p0);
+		my $veclen= $vec->mag;
+		# The texture 't' coordinate will progress at a rate of $t_scale to the length of the vector.
+		$vec->set_st(0, $veclen * $t_scale);
+		$p1->set_st(0.5, $p0->t + $vec->t);
+		# Now calculate vector to right-hand side of road
+		my $side_unit= $vec->cross($p0)->normalize;
+		# Side vec is unit length.  Now calculate the offset of half the width of the road
+		my $side= $side_unit->clone->scale($width_2)->set_st(.5,0);
+		#printf STDERR "# p0=(%.8f,%.8f,%.8f, %.4f,%.4f) p1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$p0, @$p1;
+		#printf STDERR "# vec=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$vec;
+		#printf STDERR "# side=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$side;
+		# If there is a previous clipping plane, clip against that.
+		# Else if there is a previous side vector, compute the clipping plane from that.
+		if ($prev_side_unit) {
+			# The clipping plane follows the sum of the two side vectors, so the plane vector
+			# is the cross product of their sum.
+			$clip_plane= $p0->cross($side_unit->clone->add($prev_side_unit))
+				->set_projection_origin($p0);
+			# Also clip the previous polygon
+			$polygons[-1]->clip_to_planes($clip_plane);
+		}
+		
+		# If there is a starting or ending clip plane, elongate the polygon by $width/2 on that end
+		# so that clipping it will reach to the other polygon on the far corner.
+		# If the angle is too acute, there will be a gap, but it would be too much effort to round
+		# those corners here.
+		my $vec_stub;
+		if ($clip_plane) {
+			$vec_stub //= $vec->clone->normalize->scale($width_2);
+			$p0= $p0->clone->sub($vec_stub);
+		}
+		if ($_ < $#path || $clip_end) {
+			$vec_stub //= $vec->clone->normalize->scale($width_2);
+			$p1= $p1->clone->add($vec_stub);
+		}
+		#printf STDERR "# p0=(%.8f,%.8f,%.8f, %.4f,%.4f) p1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$p0, @$p1;
+		my $rect= polygon(
+			$p0->clone->sub($side), $p0->clone->add($side),
+			$p1->clone->add($side), $p1->clone->sub($side),
+		);
+		#printf STDERR "# v0=(%.8f,%.8f,%.8f, %.4f,%.4f) v1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @{$rect->[0]}, @{$rect->[1]};
+		$rect->clip_to_planes($clip_plane) if $clip_plane;
+		push @polygons, $rect;
+		$prev_side_unit= $side_unit;
+	}
+	# Finally, clip by $clip_end if caller gave us one
+	$polygons[-1]->clip_to_planes($clip_end) if $clip_end and @polygons;
+	return \@polygons;
 }
 
 sub _latlon_clip {
@@ -151,14 +239,21 @@ sub _latlon_clip {
 	\@clipped;
 }
 
-sub _bbox_to_planes {
+sub _bbox_to_clip_planes {
 	my ($self, $bbox)= @_;
 	my ($lat0, $lon0, $lat1, $lon1)= @$bbox;
+	my $to_xyz= $self->_latlon_to_xyz_coderef;
+	# CCW around region
+	my @corners= (
+		vector($to_xyz->($lat0,$lon0)), vector($to_xyz->($lat0,$lon1)),
+		vector($to_xyz->($lat1,$lon1)), vector($to_xyz->($lat1,$lon0))
+	);
+	# Planes always have D=0 (of AX+BY+CZ=D) since they pass through the origin.
 	return (
-		[ $self->_geo_plane_normal($lat1,$lon0,$lat0,$lon0) ], # west
-		[ $self->_geo_plane_normal($lat0,$lon1,$lat1,$lon1) ], # east
-		[ $self->_geo_plane_normal($lat0,$lon0,$lat0,$lon1) ], # south
-		[ $self->_geo_plane_normal($lat1,$lon1,$lat1,$lon0) ], # north
+		$corners[3]->cross($corners[0]), #west
+		$corners[1]->cross($corners[2]), #east
+		$corners[0]->cross($corners[1]), # south
+		$corners[2]->cross($corners[3]), # north
 	);
 }
 
@@ -192,127 +287,6 @@ sub _clip_line_segments {
 			if $in;
 	}
 	return \@result;
-}
-
-sub _clip_triangles {
-	my ($self, $triangles, $planes)= @_;
-	my @result= @$triangles;
-	for my $plane (@$planes) {
-		@result= map $self->_clip_triangle_to_plane($_, $plane), @result;
-	}
-	return \@result;
-}
-
-sub _clip_triangle_to_plane {
-	my ($self, $triangle, $plane)= @_;
-	my @d= map { $_->[0]*$plane->[0] + $_->[1]*$plane->[1] + $_->[2]*$plane->[2] }
-		@$triangle;
-	# Are all vertices on the same side of the plane?
-	if (($d[0] < 0) eq ($d[1] < 0) and ($d[1] < 0) eq ($d[2] < 0)) {
-		return $d[0] < 0? () : $triangle;
-	}
-	# Else it crosses the plane
-	my $prev= 2;
-	my $out= $d[2] < 0;
-	my @vertices;
-	for (0..2) {
-		if ($out && $d[$_] < 0) { # both out, no vertex
-		}
-		elsif (!$out && $d[$_] >= 0) { # both in, queue next
-			push @vertices, $triangle->[$_];
-		}
-		elsif ($d[$_] > 0 or $d[$prev] > 0) { # line crosses plane
-			my $pos= $d[$prev] / ($d[$prev] - $d[$_]);
-			my $next= $triangle->[$_];
-			my @pt= @{$triangle->[$prev]};
-			$pt[$_]= $pt[$_]+($next->[$_]-$pt[$_])*$pos
-				for 0..4;
-			push @vertices, $out? ( \@pt, $next ) : ( \@pt );
-			$out= $d[$_] < 0;
-		}
-		$prev= $_;
-	}
-	if (@vertices == 3) {
-		return \@vertices;
-	}
-	# If we ended up with 4 vertices, return two triangles
-	elsif (@vertices == 4) {
-		return (
-			[ $vertices[0], $vertices[1], $vertices[2] ],
-			[ $vertices[2], $vertices[3], $vertices[0] ],
-		);
-	}
-	else { # not enough vertices inside plane
-		return ();
-	}
-}
-
-sub _cartesian_path_to_polygons {
-	my ($self, $width, $plane_clip, $path)= @_;
-	my @points;
-	my ($prev_x, $prev_y, $prev_z);
-	# cur vec, prev vec, sideways vec, prev sideways vec
-	my ($cx, $cy, $cz, $px, $py, $pz, $sx, $sy, $sz, $psx, $psy, $psz);
-	for (@$path) {
-		($cx, $cy, $cz)= @$_;
-		if (defined $pz) {
-			# Cross product of the two points (each a unit vector from the earth's core)
-			# Cur X Prev result in a vector to the "right hand" of the direction of the road.
-			# Magnitude is 1, so result is unit, and scale to desired width of road.
-			$sx= ( $cy*$pz - $cz*$py );
-			$sy= ( $cz*$px - $cx*$pz );
-			$sz= ( $cx*$py - $cy*$px );
-			next unless $sx || $sy || $sz;
-			my $scale= $width / sqrt($sx*$sx + $sy*$sy + $sz*$sz);
-			$sx*=$scale; $sy*=$scale; $sz*=$scale;
-			# Counter-clockwise order, left side of road then right side
-			if (defined $psz) {
-				($psx, $psy, $psz, $sx, $sy, $sz)= (
-					$sx, $sy, $sz,
-					($sx+$psx)*.5, ($sy+$psy)*.5, ($sz+$psz)*.5
-				);
-				# TODO: stretch sx,sy,sz if the corner is more than 45 degrees
-			} else {
-				($psx, $psy, $psz)= ($sx, $sy, $sz);
-			}
-			
-			# TODO: optionally include texture coordinates
-			push @points,
-				[ $px - $sx, $py - $sy, $pz - $sz ],
-				[ $px + $sx, $py + $sy, $pz + $sz ];
-		}
-		($px, $py, $pz)= ($cx, $cy, $cz);
-	}
-	if (defined $sx) {
-		push @points,
-			[ $cx - $sx, $cy - $sy, $cz - $sz ],
-			[ $cx + $sx, $cy + $sy, $cz + $sz ];
-	}
-	# TODO: is it possible to clip vs planes and still have a simple strip of triangles?
-	\@points;
-}
-
-# Calculate the plane passing through two (lat,lon) points and the origin.
-# returns (A, B, C) of Ax+By+Cz=D where D is always 0.
-sub _geo_plane_normal {
-	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
-	my $to_xyz= $self->_latlon_to_xyz_coderef;
-	my ($x0, $y0, $z0)= $to_xyz->($lat0, $lon0);
-	my ($x1, $y1, $z1)= $to_xyz->($lat1, $lon1);
-	my ($x, $y, $z)= (
-		$y0*$z1 - $z0*$y1,
-		$z0*$x1 - $x0*$z1,
-		$x0*$y1 - $y0*$x1,
-	);
-	my $mag_sq= $x*$x+$y*$y+$z*$z
-		or return (0,0,0);
-	my $scale= 1.0/sqrt($mag_sq);
-	#_assert_unit_length($x*$scale, $y*$scale, $z*$scale);
-	return ($x*$scale, $y*$scale, $z*$scale);
-}
-sub _assert_unit_length {
-	my $mag_sq= $_[0]*$_[0]+$_[1]*$_[1]+$_[2]*$_[2]; 
-	$mag_sq > 0.9999999999 && $mag_sq < 1.0000000001 or die "BUG: not unit length: $mag_sq";
 }
 
 1;
