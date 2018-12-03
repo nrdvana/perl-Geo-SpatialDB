@@ -3,17 +3,12 @@ use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
 use Geo::SpatialDB;
 use Geo::SpatialDB::Export::MapPolygon3D;
-
-my $sdb= new_geodb_in_memory(
-	# TODO: Add entities
-);
-my $ex= Geo::SpatialDB::Export::MapPolygon3D->new(
-	spatial_db => $sdb,
-);
+my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' }, latlon_scale => 1);
+my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
 
 subtest latlon_to_xyz => \&test_latlon_to_xyz;
 sub test_latlon_to_xyz {
-	my $ll2xyz= $ex->_latlon_to_xyz_coderef;
+	my $ll2xyz= $map3d->_latlon_to_xyz_coderef;
 	my @tests= (
 		[ [  0,  0], [ 1, 0, 0] ],
 		[ [ 90,  0], [ 0, 0, 1] ],
@@ -29,26 +24,6 @@ sub test_latlon_to_xyz {
 		my $name= sprintf '(%3d,%3d)', @$latlon;
 		is_within( [ $ll2xyz->(@$latlon) ], $xyz, .000000001, $name );
 	}
-	done_testing;
-}
-
-subtest clip_plane_normals => \&test_clip_plane_normals;
-sub test_clip_plane_normals {
-	# For two lat,lon coordinates, test whether they create the expected Normal vector of the plane that
-	# passes through them and the origin.  The vector points toward the "inside" of the space, and the
-	# "left" of the line segment from first polar coordinate to second polar coordinate, consistent
-	# with counter-clockwise winding order.
-	my @tests= (
-		[ [  0,  0,  0, 50 ], [  0,  0,  1 ] ],
-		[ [  0, 50,  0,  0 ], [  0,  0, -1 ] ],
-		[ [  0,  0, 90,  0 ], [  0, -1,  0 ] ],
-	);
-	for (@tests) {
-		my ($latlon, $xyz)= @$_;
-		my $name= sprintf '(%d, %d, %d, %d)', @$latlon;
-		is_within( [ $ex->_geo_plane_normal(@$latlon) ], $xyz, .000000001, $name );
-	}
-	
 	done_testing;
 }
 
@@ -74,7 +49,7 @@ sub test_clip_plane_from_bbox {
 	done_testing;
 }
 
-subtest clip_line_segments => \&test_clip_line_segments;
+#subtest clip_line_segments => \&test_clip_line_segments;
 sub test_clip_line_segments {
 	# Now test the code that clips lines against a set of planes
 	my @tests= (
@@ -97,7 +72,7 @@ sub test_clip_line_segments {
 	done_testing;
 }
 
-subtest clip_triangle_to_plane => \&test_clip_triangle_to_plane;
+#subtest clip_triangle_to_plane => \&test_clip_triangle_to_plane;
 sub test_clip_triangle_to_plane {
 	my @tests= (
 		[ 'inside',
@@ -142,6 +117,22 @@ sub test_clip_triangle_to_plane {
 			diag $_;
 			false( $name );
 		};
+	}
+}
+
+#subtest road_side_vec => \&test_road_side_vec;
+sub test_road_side_vec {
+	my @tests= (
+		[ 'pos-y-gives-neg-x',
+			[ 0, 0, 1000000 ] => [ 0, 1, 1000000 ],
+			1, # width
+			[ -.5, 0, 0 ]
+		]
+	);
+	for (@tests) {
+		my ($name, $p0, $p1, $width, $vec)= @$_;
+		my @side_vec= $ex->_calc_side_vec($p0, $p1, $width);
+		is_within( \@side_vec, $vec, 0.000000001, $name );
 	}
 }
 
