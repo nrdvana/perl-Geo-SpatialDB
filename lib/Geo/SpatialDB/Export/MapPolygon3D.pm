@@ -151,11 +151,15 @@ sub _generate_route_segment_polygons {
 	my @path= map vector($latlon_to_xyz->(@$_)), @{ $segment->path->seq };
 	my $width_2= $self->calc_road_width($segment) * .5;
 	my @polygons;
-	my ($t_pos, $t_scale, $clip_plane, $clip_end, $prev_poly)=
-		@{$plot_state}{'t_pos','t_scale','clip_start','clip_end','prev_poly'};
+	my ($t_pos, $t_scale, $clip_plane, $clip_end, $prev_poly, $prev_side_unit)=
+		@{$plot_state}{qw( t_pos t_scale clip_start clip_end prev_poly prev_side_unit )};
+	# If caller gives clip_plane, it is assumed the previous polygon was already clipped.
+	# If caller gives prev_poly, it means we are continuing another segment and previous
+	#   still needs extended and clipped.  Previous is assumed to be a quad with vertices
+	#   [-2] and [-1] being un-clipped.
+	$prev_side_unit= undef if $clip_plane;
 	$path[0]->set_st(0.5, $t_pos || 0);
 	$t_scale ||= 1/($self->lane_width/$self->earth_radius);
-	my $prev_side_unit;
 	for (1..$#path) {
 		my ($p0, $p1)= @path[$_-1, $_];
 		my $vec= $p1->clone->sub($p0);
@@ -175,25 +179,27 @@ sub _generate_route_segment_polygons {
 		if ($prev_side_unit) {
 			# The clipping plane follows the sum of the two side vectors, so the plane vector
 			# is the cross product of their sum.
-			$clip_plane= $p0->cross($side_unit->clone->add($prev_side_unit))
+			$clip_plane= $side_unit->clone->add($prev_side_unit)->cross($p0)
 				->set_projection_origin($p0);
 			# Also clip the previous polygon
-			$polygons[-1]->clip_to_planes($clip_plane);
+			($polygons[-1] || $prev_poly)->clip_to_planes($clip_plane);
+			$clip_plane->scale(-1); # invert, for clipping current polygon
 		}
 		
 		# If there is a starting or ending clip plane, elongate the polygon by $width/2 on that end
 		# so that clipping it will reach to the other polygon on the far corner.
 		# If the angle is too acute, there will be a gap, but it would be too much effort to round
 		# those corners here.
-		my $vec_stub;
-		if ($clip_plane) {
-			$vec_stub //= $vec->clone->normalize->scale($width_2);
-			$p0= $p0->clone->sub($vec_stub);
-		}
-		if ($_ < $#path || $clip_end) {
-			$vec_stub //= $vec->clone->normalize->scale($width_2);
-			$p1= $p1->clone->add($vec_stub);
-		}
+		my $vec_overhang;
+		#if ($clip_plane || !defined $clip_plane) {
+			$vec_overhang //= $vec->clone->normalize->scale($width_2);
+			$p0= $p0->clone->sub($vec_overhang);
+		#}
+		#if ($_ < $#path || $clip_end || !defined $clip_end) {
+			$vec_overhang //= $vec->clone->normalize->scale($width_2);
+			$p1= $p1->clone->add($vec_overhang);
+		#}
+		#printf STDERR "# vec_overhang=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @{$vec_overhang||[0,0,0,0,0]};
 		#printf STDERR "# p0=(%.8f,%.8f,%.8f, %.4f,%.4f) p1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$p0, @$p1;
 		my $rect= polygon(
 			$p0->clone->sub($side), $p0->clone->add($side),
@@ -204,8 +210,13 @@ sub _generate_route_segment_polygons {
 		push @polygons, $rect;
 		$prev_side_unit= $side_unit;
 	}
-	# Finally, clip by $clip_end if caller gave us one
-	$polygons[-1]->clip_to_planes($clip_end) if $clip_end and @polygons;
+	if (@polygons) {
+		# Finally, clip by $clip_end if caller gave us one
+		$polygons[-1]->clip_to_planes($clip_end) if $clip_end;
+		$plot_state->{t_pos}= $path[-1]->t;
+		$plot_state->{prev_poly}= $polygons[-1];
+		$plot_state->{prev_side_unit}= $prev_side_unit;
+	}
 	return \@polygons;
 }
 
@@ -250,8 +261,8 @@ sub _bbox_to_clip_planes {
 	);
 	# Planes always have D=0 (of AX+BY+CZ=D) since they pass through the origin.
 	return (
-		$corners[3]->cross($corners[0]), #west
-		$corners[1]->cross($corners[2]), #east
+		$corners[3]->cross($corners[0]), # west
+		$corners[1]->cross($corners[2]), # east
 		$corners[0]->cross($corners[1]), # south
 		$corners[2]->cross($corners[3]), # north
 	);

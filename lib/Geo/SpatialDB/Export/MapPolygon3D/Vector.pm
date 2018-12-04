@@ -80,6 +80,8 @@ sub cross {
 
 sub set_projection_origin {
 	$_[0][5]= $_[0]->dot($_[1]);
+	$_[0][3] ||= 0;
+	$_[0][4] ||= 0;
 	$_[0]
 }
 sub project {
