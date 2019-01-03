@@ -1,15 +1,11 @@
 package Geo::SpatialDB;
 
 use Moo 2;
-use Geo::SpatialDB::BBox;
-use Geo::SpatialDB::Location;
-use Geo::SpatialDB::Path;
-use Geo::SpatialDB::RouteSegment;
-use Geo::SpatialDB::Route;
-use Geo::SpatialDB::Area;
-use Module::Runtime 'require_module';
 use Log::Any '$log';
-sub _croak { require Carp; goto &Carp::croak }
+use Carp;
+use Geo::SpatialDB::Layer;
+use Geo::SpatialDB::Math ':all';
+use Geo::SpatialDB::Storage;
 use namespace::clean;
 
 # ABSTRACT: Generic reverse-geocoding engine on top of key/value storage
@@ -42,9 +38,23 @@ This module aims for a stronger taxonomy, to help diagnose things without an
 exhaustive investigation of free-form tags.
 
 The contents of the Geo::SpatialDB are divided into the following basic
-categories:
+taxonomy:
 
 =over
+
+=item rt
+
+A navigable path for some mode of transportation.
+
+=item geo
+
+A geological or terrestrial feature (river, lake, beach, mountain, etc)
+
+=item pol
+
+A human governance boundary or area
+
+=item 
 
 =item L<Location|Geo::SpatialDB::Location>
 
@@ -94,151 +104,104 @@ compression/decompression system, so try not to write code that depends on them.
 
 =cut
 
-has zoom_levels      => is => 'rw', default => sub { [
-	# tiles per circle, microdegrees per tile
-	[ 360*4, int(1_000_000/4) ],
-	[ 360*32, int(1_000_000/32) ],
-	[ 360*128, int(1_000_000/128) ],
-] };
-has latlon_scale     => is => 'rw', default => sub { 1_000_000 };
-has storage          => is => 'lazy', coerce => \&_build_storage;
+has layers           => ( is => 'rw', builder => 'load_layers', lazy => 1 );
+sub layer_list          { @{ shift->layers } }
+has storage          => ( is => 'rw', coerce => \&Geo::SpatialDB::Storage::coerce );
 
-sub _build_storage {
-	if (!$_[0] || ref($_[0]) eq 'HASH') {
-		my %cfg= %{ $_[0] // {} };
-		my $class= delete $cfg{CLASS} // 'LMDB_Storable';
-		$class= "Geo::SpatialDB::Storage::$class";
-		require_module($class);
-		$class->new(%cfg);
-	}
-	elsif ($_[0] && ref($_[0])->can('get')) {
-		$_[0]
-	} else {
-		_croak("Can't coerce $_[0] to Storage instance");
-	}
+sub load_layers {
+	my ($self)= @_;
+	my $l= $self->storage->get('.layers') || [];
+	$self->layers($l);
+	return $l;
 }
 
-sub tile_for_lat_lon {
-	my ($self, $lat, $lon, $tile_udeg)= @_;
-	use integer;
-	$lat= $lat % 360_000_000;
-	$lat += 360_000_000 if $lat < 0;
-	$lon= $lon % 360_000_000;
-	$lon += 360_000_000 if $lon < 0;
-	return ($lat / $tile_udeg, $lon / $tile_udeg);
-}
-
-sub _register_entity_within {
-	my ($self, $ent, $lat0, $lon0, $lat1, $lon1)= @_;
-	my $stor= $self->storage;
-	# Convert radius to arc degrees
-	my $level= $#{ $self->zoom_levels };
-	$level-- while $level && ($lat1 - $lat0 > $self->zoom_levels->[$level][1]);
- 	my ($tile_per_circle, $tile_udeg)= @{ $self->zoom_levels->[$level] };
-	my ($lat_key_0, $lon_key_0)= $self->tile_for_lat_lon($lat0, $lon0, $tile_udeg);
-	my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($lat1-1, $lon1-1, $tile_udeg);
-	
-	# TODO: correctly handle wrap-around at lon=0, and edge cases at the poles
-	#       or, choose an entirely different bucket layout
-	for my $lat_k ($lat_key_0 .. $lat_key_1) {
-		for my $lon_k ($lon_key_0 .. $lon_key_1) {
-			# Load detail node, add new entity ref, and save detail node
-			my $bucket_key= ":$level,$lat_k,$lon_k";
-			my $bucket= $stor->get($bucket_key) // {};
-			my %seen;
-			$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $ent->id ];
-			$stor->put($bucket_key, $bucket);
-		}
-	}
+sub save_layers {
+	my $self= shift;
+	my @layers= map { $_->TO_JSON } $self->layer_list;
+	$self->storage->put('.layers', \@layers);
 }
 
 sub add_entity {
 	my ($self, $e)= @_;
-	# If it's a location, index the point.  Use radius to determine what level to include it in.
-	if ($e->isa('Geo::SpatialDB::Location')) {
-		my ($lat, $lon, $rad)= ($e->lat, $e->lon, $e->rad//0);
-		# Convert radius to lat arc degrees and lon arc degrees
-		my $dLat= $rad? ($rad / 111000 * $self->latlon_precision) : 0;
-		# Longitude is affected by latitude
-		my $dLon= $rad? ($rad / (111699 * cos($lat / (360*$self->latlon_precision)))) : 0;
-		$self->storage->put($e->id, $e);
-		$self->_register_entity_within($e, $lat - $dLat, $lon - $dLon, $lat + $dLat, $lon + $dLon);
-	}
-	elsif ($e->isa('Geo::SpatialDB::RouteSegment')) {
-		unless (@{ $e->path }) {
-			$log->warn("RouteSegment with zero-length path...");
+	my %added;
+	my $stor= $self->storage;
+	for my $layer ($self->layer_list) {
+		next unless $e->type =~ $layer->type_filter_regex;
+		$layer->add_entity($self, $e);
+		my $features= $e->features_at_resolution($layer->min_feature_size);
+		my $layer_id= $layer->id;
+		for my $feature (@$features) {
+			next unless $feature->{radius} >= $layer->min_feature_size
+			        and $feature->{radius} <= $layer->max_feature_size;
+			for my $tile_id ($layer->mapper->tiles_in_range(latlon_radius_to_range(@{$feature}{'lat','lon','radius'}))) {
+				$self->_layer_tile_add_entity($layer, $tile_id, $e);
+				++$added{$layer->name};
+			}
 		}
-		my ($lat0, $lon0, $lat1, $lon1);
-		for my $pt (@{ $e->path }) {
-			$lat0= $pt->[0] if !defined $lat0 or $lat0 > $pt->[0];
-			$lat1= $pt->[0] if !defined $lat1 or $lat1 < $pt->[0];
-			$lon0= $pt->[1] if !defined $lon0 or $lon0 > $pt->[1];
-			$lon1= $pt->[1] if !defined $lon1 or $lon1 < $pt->[1];
-		}
-		$self->storage->put($e->id, $e);
-		$self->_register_entity_within($e, $lat0, $lon0, $lat1, $lon1);
 	}
-	elsif ($e->isa('Geo::SpatialDB::Route')) {
-		# Routes don't get added to positional buckets.  Just their segments.
-		$self->storage->put($e->id, $e);
-	}
-	else {
-		$log->warn("Ignoring entity ".$e->id);
-	}
+	return undef unless keys %added;
+	# Store entity if added to any layer
+	$stor->put('e'.$e->id, $e);
+	return \%added;
 }
 
-# min_rad - the minimum radius (meters) of object that we care to see
-sub _get_bucket_keys_for_area {
-	my ($self, $bbox, $min_dLat)= @_;
-	my @keys;
-	$log->debugf("  sw %d,%d  ne %d,%d  min arc %d",
-		$bbox->lat0,$bbox->lon0, $bbox->lat1,$bbox->lon1, $min_dLat)
-		if $log->is_debug;
-
-	for my $level (0 .. $#{ $self->zoom_levels }) {
-		my ($tile_per_circle, $tile_udeg)= @{ $self->zoom_levels->[$level] };
-		last if $tile_udeg < $min_dLat;
-		# Iterate south to north, west to east
-		my ($lat_key_0, $lon_key_0)= $self->tile_for_lat_lon($bbox->lat0, $bbox->lon0, $tile_udeg);
-		my ($lat_key_1, $lon_key_1)= $self->tile_for_lat_lon($bbox->lat1-1, $bbox->lon1-1, $tile_udeg);
-		# TODO: correctly handle wrap-around at lon=0, and edge cases at the poles
-		#       or, choose an entirely different bucket layout
-		for my $lat_key ($lat_key_0 .. $lat_key_1) {
-			push @keys, ":$level,$lat_key,$_"
-				for $lon_key_0 .. $lon_key_1;
-		}
-	}
-	return @keys;
+sub _layer_tile_add_entity {
+	my ($self, $layer, $tile_id, $entity)= @_;
+	my $stor= $self->storage;
+	$bucket_key= 'T'.$layer->id.'.'.$tile_id;
+	my $bucket= $stor->get($bucket_key) // {};
+	my %seen;
+	$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $entity->id ];
+	$stor->put($bucket_key, $bucket);
+	return $bucket;
 }
 
 =head2 find_at
 
+  my $entities= $db->find_at($lat, $lon, $radius, $min_feature_size);
+
+Convenience method for L</find_in> which takes a lat/lon and radius instead
+of lat/lon bounding box.  C<$min_feature_size> defaults to C<< $radius/200 >>
+assuming a screen about 1600 pixels wide and features that need at least 4
+pixels to display as anything.
+
+=head2 find_in
+
+  my $entities= $db->find_at($lat0, $lon0, $lat1, $lon1, $min_feature_size);
+
+Returns all entities relevant to C<$min_feature_size> in any tile that
+intersects with the given lat/lon bounding box.  The bounding box should
+obey the constraints C<< $lat0 <= $lat1 >> and C<< $lon0 <= $lon1 >> except
+for the case where longitude wraps the antimeridian.  In other words, if
+C<< $lon0 > $lon1 >> it means to keep going until longitude wraps and reaches
+the ending value.
+
+Note that C<$min_feature_size> is not so much a measurement of the size of
+features as it is a measure of the I<significance> of an entity in terms of
+distance.  This measurement simply filters out L</layers> whose maximum
+feature size is too small to be useful.
+See discussion in L<Geo::SpatialDB::Layer/min_feature_size>.
+
 =cut
 
 sub find_at {
-	my ($self, $lat, $lon, $radius, $filter)= @_;
-	# Convert radius to lat arc degrees and lon arc degrees
-	my $dLat= $radius? ($radius / 111000 * $self->latlon_precision) : 0;
-	# Longitude is affected by latitude
-	my $dLon= $radius? ($radius / (111699 * cos($lat / (360*$self->latlon_precision)))) : 0;
-	$self->find_in(
-		Geo::SpatialDB::BBox->new($lat-$dLat, $lon-$dLon, $lat+$dLat, $lon+$dLon),
-		$dLat/200
-	);
+	my ($self, $lat, $lon, $radius, $min_feature_size)= @_;
+	$self->find_in(radius_to_range($lat, $lon, $radius), $min_feature_size || $radius / 200);
 }
 
 sub find_in {
-	my ($self, $bbox, $min_arc)= @_;
-	$bbox= Geo::SpatialDB::BBox->coerce($bbox);
-	$min_arc //= $bbox->dLat/200;
-	my @keys= $self->_get_bucket_keys_for_area($bbox, $min_arc);
-	my %result= ( bbox => $bbox->clone );
-	$log->debugf("  searching buckets: %s", \@keys);
-	for (@keys) {
-		my $bucket= $self->storage->get($_)
-			or next;
-		for (@{ $bucket->{ent} // [] }) {
-			$result{entities}{$_} //= $self->storage->get($_);
+	my ($self, $lat0, $lon0, $lat1, $lon1, $min_feature_size)= @_;
+	my $stor= $self->storage;
+	my $range= [ $lat0, $lon0, $lat1, $lon1 ];
+	my %result= ( range => $range );
+	for my $layer ($self->layer_list) {
+		next unless $layer->max_feature_size > $min_feature_size;
+		for my $tile_id ($layer->mapper->tiles_in_range(@$range)) {
+			my $bucket= $stor->get('l'.$layer->id.'.'.$tile_id)
+				or next;
+			for (@{ $bucket->{ent} || [] }) {
+				$result{entities}{$_} ||= $self->storage->get("e$_");
+			}
 		}
 	}
 	\%result;

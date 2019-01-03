@@ -12,7 +12,9 @@ my $tmpdir= catdir($FindBin::RealBin, 'tmp', $FindBin::Script);
 remove_tree($tmpdir, { error => \my $ignored });
 make_path($tmpdir or die "Can't create $tmpdir");
 
-my $importer= Geo::SpatialDB::Import::OpenStreetMap->new();
+my $importer= Geo::SpatialDB::Import::OpenStreetMap->new(
+	tmp_storage => { mapsize => 10*1024*1024 },  # for cpan testers restrictions
+);
 
 package Test::Mock::SpatialDB {
 	use Moo 2;

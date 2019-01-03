@@ -9,22 +9,21 @@ use Geo::SpatialDB;
 
 use_ok 'Geo::SpatialDB::Import::OpenStreetMap' or die;
 
-my $tmpdir= catdir($FindBin::RealBin, 'tmp', $FindBin::Script);
-remove_tree($tmpdir, { error => \my $ignored });
-make_path($tmpdir or die "Can't create $tmpdir");
+my $dbdir= catdir($FindBin::RealBin, 'tmp', $FindBin::Script, 'db');
+remove_tree($dbdir, { error => \my $ignored });
 
 my $sdb= Geo::SpatialDB->new(
-	storage   => { path => $tmpdir }
+	storage => { path => $dbdir, create => 1 }
 );
 
 $sdb->add_entity(
-	Geo::SpatialDB::RouteSegment->new(
+	Geo::SpatialDB::Entity::RouteSegment->new(
 		id   => 1,
 		path => [ [1000000,1001000], [1001000,1001000] ],
 	)
 );
 $sdb->add_entity(
-	Geo::SpatialDB::RouteSegment->new(
+	Geo::SpatialDB::Entity::RouteSegment->new(
 		id   => 2,
 		path => [ [1100000,1101000], [1101000,1101000] ],
 	)

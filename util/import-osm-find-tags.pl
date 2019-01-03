@@ -66,5 +66,5 @@ my $tags= $importer->aggregate_tags(
 	values => $opt_values,
 	filter => \%filter,
 );
-use JSON::MaybeXS;
-print JSON::MaybeXS->new->canonical->pretty->encode($tags);
+use JSON;
+print JSON->new->canonical->pretty->encode($tags);

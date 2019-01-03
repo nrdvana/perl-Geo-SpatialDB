@@ -171,12 +171,9 @@ sub load_xml {
 					if @stack;
 			}
 			elsif ($el eq 'node') {
-				# Convert lat/lon to microdegree integers, to save space when encoded
-				my $lat= int( $obj->{lat} * 1_000_000 );
-				my $lon= int( $obj->{lon} * 1_000_000 );
 				$stats->{node}++;
 				$stats->{node_tag}{$_}++ for keys %{ $obj->{tag} // {} };
-				$stor->put('n'.$obj->{id}, [ $lat, $lon, [], $obj->{tag} ]);
+				$stor->put('n'.$obj->{id}, [ $obj->{lat}, $obj->{lon}, [], $obj->{tag} ]);
 			}
 			elsif ($el eq 'way') {
 				$stats->{way}++;
@@ -410,7 +407,7 @@ iterating the OpenStreetMap data.
 =cut
 
 sub generate_roads {
-	my ($self, $sdb, %opts)= @_;
+	my ($self, $geodb, %opts)= @_;
 	$self->preprocess;
 	my $stor= $self->tmp_storage;
 	my $stats= $self->stats;
@@ -575,7 +572,7 @@ sub generate_roads {
 		}
 		
 		# The segments are finished, so we import them
-		$sdb->add_entity($_) for @segments;
+		$geodb->add_entity($_) for @segments;
 		$stats->{gen_road_seg}+= @segments;
 		$stats->{gen_road_seg_pts}+= scalar @path;
 	}
@@ -589,7 +586,7 @@ sub generate_roads {
 	$iter= $stor->iterator($tmp_prefix);
 	my ($k, $v);
 	while (($k, $v)= $iter->() and index($k, $tmp_prefix)==0) {
-		$sdb->add_entity($v);
+		$geodb->add_entity($v);
 		++$n_routes;
 	}
 	$stor->rollback;
