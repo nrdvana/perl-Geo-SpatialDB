@@ -63,7 +63,8 @@ sub BUILD {
 
 sub save_config {
 	my $self= shift;
-	$self->_write_config_file({
+	$self->_save_config($self->path, {
+		CLASS => ref($self),
 		map { $_ => $self->$_ }
 		qw( readonly mapsize run_with_scissors )
 	});
@@ -72,7 +73,7 @@ sub save_config {
 sub DESTROY {
 	my $self= shift;
 	warn "Destroying LMDB_Storable instance with uncommitted data!"
-		if $self->_txn && $self->_written;
+		if $self->_has_txn && $self->_written;
 }
 
 has _env => ( is => 'lazy' );
@@ -95,7 +96,7 @@ sub _build__env {
 	);
 }
 
-has _txn => ( is => 'lazy', clearer => 1 );
+has _txn => ( is => 'lazy', clearer => 1, predicate => 1 );
 has _written => ( is => 'rw' );
 sub _build__txn {
 	shift->_env->BeginTxn;
