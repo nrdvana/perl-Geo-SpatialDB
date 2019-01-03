@@ -5,6 +5,7 @@ use LMDB_File ':flags', ':cursor_op', ':error';
 use Storable 'freeze', 'thaw';
 use Carp;
 use File::Path 'make_path';
+use Scalar::Util 'weaken';
 use namespace::clean;
 
 extends 'Geo::SpatialDB::Storage';
@@ -107,6 +108,8 @@ sub _build__db {
 	shift->_txn->OpenDB();
 }
 
+has _cursors => ( is => 'rw', default => sub { +{} } );
+
 my $storable_magic= substr(freeze({}), 0, 1);
 sub die_invalid_assumption {
 	die "Author has made invalid assumptions for your version of Storable and needs to fix his code";
@@ -176,8 +179,10 @@ see concurrent changes by other processes, you need to call 'commit' or 'rollbac
 
 sub commit {
 	my $self= shift;
-	if ($self->_txn) {
+	if ($self->_has_txn) {
 		$self->_txn->commit;
+		# Need to forcibly clean up all other handles to this txn, due to LMDB_Storable GC bugs
+		%{ $self->_cursors }= ();
 		$self->_clear_db;
 		$self->_clear_txn;
 	}
@@ -186,8 +191,10 @@ sub commit {
 
 sub rollback {
 	my $self= shift;
-	if ($self->_txn) {
+	if ($self->_has_txn) {
 		$self->_txn->abort;
+		# Need to forcibly clean up all other handles to this txn, due to LMDB_Storable GC bugs
+		%{ $self->_cursors }= ();
 		$self->_clear_db;
 		$self->_clear_txn;
 	}
@@ -214,9 +221,12 @@ sub iterator {
 	my ($self, $key)= @_;
 	my $op= defined $key? MDB_SET_RANGE : MDB_FIRST;
 	my $cursor= $self->_db->Cursor;
+	$self->_cursors->{$cursor}= $cursor; # this is the official reference
+	weaken($cursor); # hold onto a weak ref so we know when it's gone
 	my $data;
 	return sub {
 		local $LMDB_File::die_on_err= 0;
+		croak "Iterator refers to a terminated transaction" unless $cursor;
 		my $ret= $cursor->get($key, $data, $op);
 		$op= MDB_NEXT;
 		if ($ret) {

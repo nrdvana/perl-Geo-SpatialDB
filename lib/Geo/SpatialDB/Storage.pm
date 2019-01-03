@@ -4,7 +4,7 @@ use Moo 2;
 use Module::Runtime 'require_module';
 use File::Spec::Functions 'catfile';
 use Carp;
-use JSON;
+use JSON::MaybeXS;
 use namespace::clean;
 
 # ABSTRACT: Base class for key/value storage appropriate for Geo::SpatialDB
@@ -87,6 +87,11 @@ sub _interpret_class_name {
 	$name =~ s/^\+//? $name
 	: $name =~ /::/? $name
 	: 'Geo::SpatialDB::Storage::'.$name;
+}
+
+sub _storage_dir_empty {
+	my ($class, $path)= @_;
+	return !(grep { $_ ne '.' and $_ ne '..' } <$path/*>);
 }
 
 sub _unimplemented { my ($class, $method)= @_; croak "$class has not implemented $method" }
