@@ -118,26 +118,62 @@ they would all be identical at single-precision.
 
 sub generate_route_polygons {
 	my ($self, $geo_search_result, %opts)= @_;
-	my @quads;
-	my $cb= $opts{callback} // sub { push @quads, [ @_ ] };
 	my @plane_clip= $opts{latlon_clip}? $self->_bbox_to_planes($opts{latlon_clip}) : ();
-	my @segments;
-	my %xnodes; # points-of-intersection
+	my %isec; # points-of-intersection
+	my %path_polygons;
 	# Need to know all intersections of route segments, in order to render the intersections correctly
 	for my $ent (values %{ $geo_search_result->{entities} }) {
 		# route segments must have more than one vertex for any of the rest of the code to work
-		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$_->path->seq} > 1) {
-			push @segments, $ent;
-			push @{ $xnodes{$_} }, $ent for $ent->endpoint_keys;
+		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$ent->path->seq} > 1) {
+			my ($start, $end)= @{$ent->endpoint_keys};
+			$isec{$start}{$ent->path->id}= { seg => $ent, at => 0, peer => $end };
+			$isec{$end}{$ent->path->id}=   { seg => $ent, at => -1, peer => $start };
 		}
 	}
-	# Now render polygons for each route segment
-	my $polygons= [];
-	for (@segments) {
-		push @$polygons, $self->_generate_route_segment_polygons($_,
-			src_branches => $xnodes{$_->endpoint_keys->[0]},
-			dst_branches => $xnodes{$_->endpoint_keys->[1]},
-		);
+	# Process all the routes, attempting to follow paths from intersections
+	# with more than 3 roads first, passing through intersections with 2 paths
+	# as if it was a single path.
+	for my $isec (sort { scalar(keys %$b) <=> scalar(keys %$a) } values %isec) {
+		# Process each segment that comes from this intersection
+		for (keys %$isec) {
+			next if exists $path_polygons{$_};
+			my $cur_path_id= $_;
+			my $cur_isec= $isec;
+			while (1) {
+				my $next_isec= $isec->{ $cur_isec->{$cur_path_id}{peer} };
+				$path_polygons{$cur_path_id}= $self->_generate_route_segment_polygons(
+					$isec->{$cur_path_id}{seg},
+					$isec->{$cur_path_id}{at} == 0? ( $isec, $peer_isec ) : ( $peer_isec, $isec )
+				);
+				last if scalar(%$next_isec) != 2;
+				($next_path_id)= grep $_ != $cur_path_id, keys %$next_isec;
+				last unless $next_path_id && !$path_polygons{$next_path_id};
+				$cur_isec= $next_isec;
+				$cur_path_id= $next_path_id;
+			}
+		}
+		# At this point, all paths out of this intersection have been processed.
+		# If more than 2 paths, build a polygon from the accumulated geometry,
+		# then clip the polygons at the ends of each path.
+		next unless keys %$isec > 2;
+		# Sort vectors by angle, counter-clockwise
+		my @exits= values %$isec;
+		my $center= $exits[0]{point};
+		my $angle0= $exits[0]{side_unit_vector};
+		my $angle90= $center->cross($angle0)->normalize;
+		@exits= sort { $angle0->angle_cmp($angle90, $a->{side_unit_vector}, $b->{side_unit_vector}) } @exits;
+		for (@exits) {
+			...
+			#my $p0_vec= [ vec_add($p0, [vec_neg($pivot)]) ];
+			#my $p1_vec= [ vec_add($p1, [vec_neg($pivot)]) ];
+			#my $p0_ssvec= [ vec_scale($p0_svec, $width0/2) ];
+			#my $p1_ssvec= [ vec_scale($p1_svec, $width1/2) ];
+			#my $p1v_proj_p0s= abs(vec_proj($p1_vec, $p0_svec));
+			#my $p1ev= [ vec_add($pivot, [vec_scale($p1_vec, $width0*.5/$p1v_proj_p0s)]) ];
+			#my $p0v_proj_p1s= abs(vec_proj($p0_vec, $p1_svec));
+			#my $p0ev= [ vec_add($pivot, [vec_scale($p0_vec, $width1*.5/$p0v_proj_p1s)]) ];
+			#my $p10ev= [ vec_add($p1ev, [vec_scale($p0_vec, $width1*.5/$p0v_proj_p1s)]) ];
+		}
 	}
 	# Then clip polygons to the BBox
 	$polygons= $self->_clip_triangles($polygons, \@plane_clip)
@@ -146,13 +182,27 @@ sub generate_route_polygons {
 }
 
 sub _generate_route_segment_polygons {
-	my ($self, $segment, $plot_state)= @_;
+	my ($self, $segment, $start_isec, $end_isec)= @_;
+	
+	# TODO: for each intersection, calculate:
+	#   point
+	#   exit vector (toward next path point)
+	#   side unit vector (toward road's right-hand)
+	#   road width
+	
 	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
 	my @path= map vector($latlon_to_xyz->(@$_)), @{ $segment->path->seq };
-	my $width_2= $self->calc_road_width($segment) * .5;
-	my @polygons;
+	# Iterate from an intersection with known t_pos, if possible.
+	if (defined $start_isec->{t_pos}) {
+		# forward iteration from a previous processed segment
+		$prev_side_unit= $start_isec->{
+	}
+	else {
+	}
 	my ($t_pos, $t_scale, $clip_plane, $clip_end, $prev_poly, $prev_side_unit)=
 		@{$plot_state}{qw( t_pos t_scale clip_start clip_end prev_poly prev_side_unit )};
+	my $width_2= $self->calc_road_width($segment) * .5;
+	my @polygons;
 	# If caller gives clip_plane, it is assumed the previous polygon was already clipped.
 	# If caller gives prev_poly, it means we are continuing another segment and previous
 	#   still needs extended and clipped.  Previous is assumed to be a quad with vertices

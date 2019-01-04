@@ -78,6 +78,20 @@ sub cross {
 	], ref $_[0];
 }
 
+# For vectors arrayed around an "up" vector, sort $a and $b in the order they would
+# occur counter clockwise from $self.  $self, $a, and $b must be unit vectors.
+sub angle_cmp {
+	my ($angle0, $angle90, $a, $b)= @_;
+	my $a_proj_0=  $a->dot($angle0);
+	my $a_proj_90= $a->dot($angle90);
+	my $b_proj_0=  $b->dot($angle0);
+	my $b_proj_90= $b->dot($angle90);
+	return
+		($a_proj_90 >= 0? 1-$a_proj_self : 3+$a_proj_self)
+		<=>
+		($b_proj_90 >= 0? 1-$b_proj_self : 3+$b_proj_self);
+}
+
 sub set_projection_origin {
 	$_[0][5]= $_[0]->dot($_[1]);
 	$_[0][3] ||= 0;
