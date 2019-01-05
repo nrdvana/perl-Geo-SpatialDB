@@ -1,7 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
-use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector';
+use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector', 'vector_latlon';
 
 my $v0= new_ok( 'Geo::SpatialDB::Export::MapPolygon3D::Vector', [ 0,0,0 ] );
 
@@ -48,6 +48,20 @@ subtest clip_plane => sub {
 		my $d= $plane->project($pt2);
 		ok( $d>0 eq $sign>0 && $d<0 eq $sign<0 ) or diag "Sign mismatch: $d != $sign";
 	}
+};
+
+subtest sort_heading => sub {
+	my @expected;
+	for (my $lon= 0; $lon < 359; $lon += 10) {
+		for my $lat (-89 .. 89) {
+			# vary the longitude for every vector, so avoid depending on sort of vectors of identical heading
+			push @expected, vector_latlon( $lat, $lon + ($lat/90) + 1 );
+		}
+	}
+	my @scrambled= ( $expected[0], reverse @expected[1..$#expected] );
+	my @sorted= vector(0,0,1)->sort_vectors_by_heading(@scrambled);
+	is_deeply( \@sorted, \@expected, 'sorted vectors' );
+	done_testing;
 };
 
 done_testing;
