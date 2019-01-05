@@ -3,7 +3,11 @@ use strict;
 use warnings;
 use Carp 'croak';
 use Exporter 'import';
-our @EXPORT_OK= qw( vector );
+use Math::Trig qw( spherical_to_cartesian deg2rad );
+our @EXPORT_OK= qw( vector vector_latlon );
+
+sub vector { __PACKAGE__->new(@_); }
+sub vector_latlon { __PACKAGE__->new_latlon(@_); }
 
 sub new {
 	my ($class, @vec)= @_;
@@ -11,9 +15,10 @@ sub new {
 	$vec[2] ||= 0;
 	bless \@vec, ref($class)||$class;
 }
-sub vector {
-	__PACKAGE__->new(@_);
+sub new_latlon {
+	$_[0]->new(spherical_to_cartesian( 1, deg2rad($_[2]), deg2rad(90-$_[1]) ));
 }
+
 sub clone {
 	bless [ @{$_[0]} ], ref $_[0];
 }
