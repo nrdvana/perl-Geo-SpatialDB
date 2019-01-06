@@ -6,8 +6,124 @@ use Exporter 'import';
 use Math::Trig qw( spherical_to_cartesian deg2rad );
 our @EXPORT_OK= qw( vector vector_latlon );
 
+=head1 SYNOPSIS
+
+  my ($x,$y,$z)= vector(1,2,3)->cross(vector(3,2,1))->normalize->xyz;
+
+=head1 DESCRIPTION
+
+This class implements a basic mathematic 3-space vector, optimized for performance as much as
+reasonable for Perl.  Most methods mutate the current vector rather than returning new vector
+objects, with the notable exception of 'cross' which returns a new vector.
+
+This class also allows for 's' and 't' coordinates, useful for textures, and holds another
+component used as "D" in the plane equation of C<< A*X + B*Y + C*Z = D >>.
+
+=head1 EXPORTED FUNCTIONS
+
+=head2 vector
+
+Alias for C<< $class->new(@_) >>
+
+=head2 vector_latlon
+
+Alias for C<< $class->vector_latlon(@_) >>
+
+=cut
+
 sub vector { __PACKAGE__->new(@_); }
 sub vector_latlon { __PACKAGE__->new_latlon(@_); }
+
+=head1 ATTRIBUTES
+
+The following accessors return l-values, which you can assign values to.
+
+  my $x= $vec->x;
+  $vec->x= $value;
+
+=over
+
+=item x
+
+=item y
+
+=item z
+
+=item s
+
+=item t
+
+=item projection_offset
+
+This is the "D" value of a vector used to represent a plane of the form C<< A x + B y + C z = D >>.
+
+=back
+
+The following "attributes" are shortcuts to access multiple fields at once:
+
+  my ($x, $y, $z)= $vec->xyz;
+  ($vec->xyz) = (1, 2, 3);
+
+=over
+
+=item xyz
+
+=item st
+
+=item xyzst
+
+There are also some setter functions which return the vector, for convenient chaining:
+
+  $v1->set_st(0,1)->scale(...)->...
+
+=over
+
+=item set_xyz
+
+=item set_st
+
+=item set_xyzst
+
+=cut
+
+sub x     : lvalue { $_[0][0] }
+sub y     : lvalue { $_[0][1] }
+sub z     : lvalue { $_[0][2] }
+sub xyz   : lvalue { @{$_[0]}[0..2] }
+sub s     : lvalue { $_[0][3] }
+sub t     : lvalue { $_[0][4] }
+sub st    : lvalue { @{$_[0]}[3..4] }
+sub xyzst : lvalue { @{$_[0]}[0..4] }
+
+sub set_xyz   { @{$_[0]}[0..2]= @_[1..$#_]; $_[0] }
+sub set_st    { @{$_[0]}[3..4]= @_[1..$#_]; $_[0] }
+sub set_xyzst { @{$_[0]}[0..4]= @_[1..$#_]; $_[0] }
+
+# Abuse the vector class to include a projection offset
+sub projection_offset : lvalue { $_[0][5] }
+
+=head1 METHODS
+
+=head2 new
+
+  $class->new($x, $y); # z=0, s=undef, t=undef
+  $class->new($x, $y, $z); #  s=undef, t=undef
+  $class->new($x, $y, $z, $s, $t);
+
+Return a new vector object composed of two or more components.  The 's' and 't' coordinates are
+not part of the vector unless specified (but can be assigned later).  Z defaults to 0.
+
+=head2 new_latlon
+
+  $class->new_latlon($lat, $lon);
+
+Return a new vector of length 1 created from the polar coordinates, in degrees.
+
+=head2 clone
+
+Return a copy of a vector
+
+=cut
 
 sub new {
 	my ($class, @vec)= @_;
@@ -23,21 +139,24 @@ sub clone {
 	bless [ @{$_[0]} ], ref $_[0];
 }
 
-sub x : lvalue { $_[0][0] }
-sub y : lvalue { $_[0][1] }
-sub z : lvalue { $_[0][2] }
-sub xyz    { @{$_[0]}[0..2] }
-sub s : lvalue { $_[0][3] }
-sub t : lvalue { $_[0][4] }
-sub st     { @{$_[0]}[3..4] }
-sub xyzst  { @{$_[0]}[0..4] }
+=head2 scale
 
-sub set_xyz   { @{$_[0]}[0..2]= @_[1..$#_]; $_[0] }
-sub set_st    { @{$_[0]}[3..4]= @_[1..$#_]; $_[0] }
-sub set_xyzst { @{$_[0]}[0..4]= @_[1..$#_]; $_[0] }
+  $vec->scale(5)->...
 
-# Abuse the vector class to include a projection offset
-sub projection_offset : lvalue { $_[0][5] }
+Multiply every component of the vector by the given value, and return the vector.
+
+=head2 add
+
+  $vec1->add($vec2)->...
+
+Add the components of $vec2 to this vector for each component of this vector which is defined.
+X, Y, and Z are always defined, but S and T might not be.
+
+=head2 sub
+
+Subtract the components of $vec2 from this vector, in the manner described for L</add>.
+
+=cut
 
 sub scale {
 	$_ *= $_[1] for @{ $_[0] };
@@ -53,8 +172,39 @@ sub sub {
 	$_[0]
 }
 
+=head2 dot
+
+Return the dot product of the two vectors.
+
+=head2 cross
+
+Return a new vector which is the cross-product of this vector by the argument.
+
+=head2 mag_sq
+
+Return the sum-of-squares of the C<x,y,z> components of this vector.
+(aka the dot product of the vector with itself, or the square of the magnitude).
+
+=head2 mag
+
+Magnitude of the vector.
+
+=head2 normalize
+
+Scale the vector by the inverse of its magnitude, resulting in a unit-length vector.
+
+=cut
+
 sub dot {
 	$_[0][0] * $_[1][0] + $_[0][1] * $_[1][1] + $_[0][2] * $_[1][2];
+}
+
+sub cross {
+	bless [
+		$_[0][1]*$_[1][2] - $_[0][2]*$_[1][1],
+		$_[0][2]*$_[1][0] - $_[0][0]*$_[1][2],
+		$_[0][0]*$_[1][1] - $_[0][1]*$_[1][0],
+	], ref $_[0];
 }
 
 sub mag_sq {
@@ -76,15 +226,9 @@ sub normalize {
 	$_[0]
 }
 
-sub cross {
-	bless [
-		$_[0][1]*$_[1][2] - $_[0][2]*$_[1][1],
-		$_[0][2]*$_[1][0] - $_[0][0]*$_[1][2],
-		$_[0][0]*$_[1][1] - $_[0][1]*$_[1][0],
-	], ref $_[0];
-}
+=head2 sort_vectors_by_heading
 
-=head2 sort_cclockwise
+  my @sorted= $pole_vector->sort_vectors_by_heading( @vectors );
 
 Sort a list of vectors in order of counter-clockwise "heading" relative to this vector as a
 "pole".  The vectors do not need to be unit length or even perpendicular to this vector.
@@ -125,12 +269,27 @@ sub sort_vectors_by_heading {
 		} 0..$#to_sort;
 }
 
+=head2 set_projection_origin
+
+Use this vector as a plane normal, by setting the C<D> value of C<< A x + B y + C z = D >>
+with the argument used as C<x,y,z> and this vector used as C<A,B,C>.
+
+=cut
+
 sub set_projection_origin {
 	$_[0][5]= $_[0]->dot($_[1]);
 	$_[0][3] ||= 0;
 	$_[0][4] ||= 0;
 	$_[0]
 }
+
+=head2 project
+
+Project another vector (point) onto this vector and subtract the projection origin, resulting
+in the distance of that point from the described plane.
+
+=cut
+
 sub project {
 	$_[0]->dot($_[1]) - ($_[0][5] || 0);
 }
