@@ -7,7 +7,7 @@ use File::Spec::Functions;
 use Scalar::Util 'reftype';
 use File::Path 'remove_tree','make_path';
 use Log::Any::Adapter 'TAP';
-our @EXPORT_OK= qw( get_fresh_tmpdir tmpdir new_geodb_in_tmpdir new_geodb_in_memory is_within );
+our @EXPORT_OK= qw( get_fresh_tmpdir tmpdir new_geodb_in_tmpdir new_geodb_in_memory is_within is_nearly );
 our %EXPORT_TAGS= ( all => \@EXPORT_OK );
 
 sub import {
@@ -53,6 +53,8 @@ sub is_within {
 		main::fail($msg);
 	}
 }
+
+sub is_nearly { is_within($_[0], $_[1], 0.0000000000001, $_[2]); }
 
 sub _is_elem_within {
 	my ($elem, $actual, $expected, $tolerance)= @_;

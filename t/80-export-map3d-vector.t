@@ -5,6 +5,27 @@ use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector', 'vector_latlon';
 
 my $v0= new_ok( 'Geo::SpatialDB::Export::MapPolygon3D::Vector', [ 0,0,0 ] );
 
+subtest ctor_read_write => sub {
+	my $v= vector(0,0);
+	is( $v->x, 0, 'z got value' );
+	is( $v->s, undef, 's undefined' );
+	is( $v->t, undef, 't undefined' );
+	$v->x= 1;
+	is_deeply( [ $v->xyz ], [ 1,0,0 ], 'read xyz' );
+	is( $v->x, 1, 'assigned x' );
+	is( $v->s, undef, 's undefined' );
+	is( $v->t, undef, 't undefined' );
+	($v->xyz)= (3,4,5);
+	is( $v->z, 5, 'assigned z via xyz' );
+	$v= vector(0,0,0,0,0);
+	is( $v->s, 0, 's initialized' );
+	
+	is_nearly( [vector_latlon(0,0)->xyz], [1,0,0], 'lat_lon' );
+	is_nearly( [vector_latlon(90,0)->xyz], [0,0,1], 'lat_lon' );
+	is_nearly( [vector_latlon(-90,0)->xyz], [0,0,-1], 'lat_lon' );
+	done_testing;
+};
+
 subtest magnitude => sub {
 	my @tests= (
 		[ [0,0,0] => 0 ],
@@ -33,7 +54,7 @@ subtest cross => sub {
 	done_testing;
 };
 
-subtest clip_plane => sub {
+subtest projection => sub {
 	my @tests= (
 		[ [1,0,0] => [0,1,1], [0,1,1]   => 0 ],
 		[ [1,0,0] => [0,1,1], [-50,2,2] => 0 ],
