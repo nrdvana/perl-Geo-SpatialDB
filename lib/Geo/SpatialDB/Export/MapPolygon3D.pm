@@ -51,6 +51,14 @@ has lane_width   => is => 'rw', default => sub { 3 }; # meters
 
 =head1 METHODS
 
+=head2 calc_road_width
+
+  my $width= $export->calc_road_width($route_segment);
+
+Use details about the route segment to determine it's real-world width.  However, the width is
+returned in units of earth-radius, consistent with the unit-length polar coordinates returned
+for the road vertices.
+
 =cut
 
 sub calc_road_width {
@@ -58,40 +66,49 @@ sub calc_road_width {
 	$route_segment->lanes * $self->lane_width / $self->earth_radius;
 }
 
+=head2 generate_route_lines
+
+  my $list= $self->generate_route_lines($geo_search_result, %options);
+  # [
+  #   { entity => $entity, line_strip => [ $vertex, $vertex, ... ] },
+  #   ...
+  # ]
+
+Return an arrayref of entries which describe sequences of line strips.  The entity is used to
+determine how the line should be drawn.  The line_strip is a sequence of 3D points (Vector
+objects, actually) which can be accessed as simple arrays of C<< [$x,$y,$z] >>.
+
+If the line is broken by a clipping plane, it results in two entries for the same entity,
+each with an un-broken line_strip.
+
+=cut
+
 sub generate_route_lines {
 	my ($self, $geo_search_result, %opts)= @_;
-	my @line_strips;
-	my $cb= $opts{callback} // sub { push @line_strips, [@_] };
+	my @entries;
 	my $latlon_clip= $opts{latlon_clip};
 	for my $ent (values %{ $geo_search_result->{entities} }) {
 		if ($ent->isa('Geo::SpatialDB::RouteSegment')) {
 			my $path= $ent->path
 				or next;
-			$cb->($ent, map vector_latlon($_), @$_)
+			push @entries, { entity => $ent, line_strip => [ map vector_latlon($_), @$_ ] }
 				for $latlon_clip? @{ $self->_latlon_clip($latlon_clip, $path) } : $path;
 		}
 	}
-	\@lines;
+	\@entries;
 }
 
 =head2 generate_route_polygons
 
-  my $data= $self->generate_route_polygons($geo_search_result, %opts);
-  # {
-  #   vbuf => pack('d*', ...),
-  #   tbuf => pack('f*', ...),
-  #   routes => [
-  #     [ $route, $vertex_offset, $polygon_count ],
-  #     ...
-  #   ],
-  #   normal => [ $i, $j, $k ]
-  # }
+  my $data= $self->generate_route_polygons($geo_search_result, %options);
+  # [
+  #   { entity => $entity, polygons => [ $polygon, $polygon, ... ] },
+  #   ...
+  # ]
 
-Returns a packed buffer of double-precision triangle geometry (x,y,z) and a packed buffer of
-single-precision texture coordinates (s,t) and an array that maps each route segment to an
-array of polygons.  The polygon coordinates describe points on a unit sphere of the Earth,
-thus the need for double precision.  Only one normal is generated, since for a standard tile
-they would all be identical at single-precision.
+Returns an arrayref of entries which describe sets of polygons.  All polygons of each item use
+the same texture, determined by the type of entity.  The polygons are individual convex polygons
+and not necessarily joined in any way, or composed of any specific number of vertices.
 
 =cut
 
