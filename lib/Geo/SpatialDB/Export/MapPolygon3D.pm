@@ -115,14 +115,30 @@ and not necessarily joined in any way, or composed of any specific number of ver
 sub generate_route_polygons {
 	my ($self, $geo_search_result, %opts)= @_;
 	my @plane_clip= $opts{latlon_clip}? $self->_bbox_to_planes($opts{latlon_clip}) : ();
-	my %isec; # points-of-intersection
+	my %isec; # points-of-intersection, keyed by "endpoint_keys", and values are path IDs that meet there.
 	my %path_polygons;
+	# %isec= (
+	#   $endpoint_id => {
+	#     $path_id => {
+	#       seg   => $RouteSegment,
+	#       at    => $path_idx,
+	#       peer  => $other_endpoint_id,
+	#       t_pos => $texture_t_coordinate,
+	#       point => $cartesian_endpoint_vector,   # these are filled in by _generate_route_segment_polygons
+	#       vec   => $cartesian_vector_from_point, #
+	#       side  => $unit_sideways_vector,        #
+	#       width => $road_width,                  #
+	#       poly  => $polygon,                     #
+	#     }
+	#   }
+	# )
+	my @result;
 	# Need to know all intersections of route segments, in order to render the intersections correctly
 	for my $ent (values %{ $geo_search_result->{entities} }) {
 		# route segments must have more than one vertex for any of the rest of the code to work
 		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$ent->path->seq} > 1) {
 			my ($start, $end)= @{$ent->endpoint_keys};
-			$isec{$start}{$ent->path->id}= { seg => $ent, at => 0, peer => $end };
+			$isec{$start}{$ent->path->id}= { seg => $ent, at =>  0, peer => $end };
 			$isec{$end}{$ent->path->id}=   { seg => $ent, at => -1, peer => $start };
 		}
 	}
@@ -132,102 +148,104 @@ sub generate_route_polygons {
 	for my $isec (sort { scalar(keys %$b) <=> scalar(keys %$a) } values %isec) {
 		# Process each segment that comes from this intersection
 		for (keys %$isec) {
-			next if exists $path_polygons{$_};
 			my $cur_path_id= $_;
+			my $prev_path_id= undef;
 			my $cur_isec= $isec;
 			while (1) {
+				last if exists $path_polygons{$cur_path_id};
 				my $next_isec= $isec->{ $cur_isec->{$cur_path_id}{peer} };
-				$path_polygons{$cur_path_id}= $self->_generate_route_segment_polygons(
+				my $polygons= $self->_generate_route_segment_polygons(
 					$isec->{$cur_path_id}{seg},
-					$isec->{$cur_path_id}{at} == 0? ( $isec, $peer_isec ) : ( $peer_isec, $isec )
+					$isec->{$cur_path_id}{at} == 0? ( $cur_isec, $next_isec ) : ( $next_isec, $cur_isec )
 				);
+				$path_polygons{$cur_path_id}= $polygons;
+				push @result, { entity => $isec->{$cur_path_id}{seg}, polygons => $polygons };
 				last if scalar(%$next_isec) != 2;
-				($next_path_id)= grep $_ != $cur_path_id, keys %$next_isec;
-				last unless $next_path_id && !$path_polygons{$next_path_id};
+				($cur_path_id)= grep $_ != $cur_path_id, keys %$next_isec;
 				$cur_isec= $next_isec;
-				$cur_path_id= $next_path_id;
 			}
 		}
 		# At this point, all paths out of this intersection have been processed.
 		# If more than 2 paths, build a polygon from the accumulated geometry,
 		# then clip the polygons at the ends of each path.
 		next unless keys %$isec > 2;
+		my $center= (values %$isec){point};  # all exits should have same point
 		# Sort vectors by angle, counter-clockwise
-		my @exits= values %$isec;
-		my $center= $exits[0]{point};
-		my $angle0= $exits[0]{side_unit_vector};
-		my $angle90= $center->cross($angle0)->normalize;
-		@exits= sort { $angle0->angle_cmp($angle90, $a->{side_unit_vector}, $b->{side_unit_vector}) } @exits;
-		for (@exits) {
-			...
-			#my $p0_vec= [ vec_add($p0, [vec_neg($pivot)]) ];
-			#my $p1_vec= [ vec_add($p1, [vec_neg($pivot)]) ];
-			#my $p0_ssvec= [ vec_scale($p0_svec, $width0/2) ];
-			#my $p1_ssvec= [ vec_scale($p1_svec, $width1/2) ];
-			#my $p1v_proj_p0s= abs(vec_proj($p1_vec, $p0_svec));
-			#my $p1ev= [ vec_add($pivot, [vec_scale($p1_vec, $width0*.5/$p1v_proj_p0s)]) ];
-			#my $p0v_proj_p1s= abs(vec_proj($p0_vec, $p1_svec));
-			#my $p0ev= [ vec_add($pivot, [vec_scale($p0_vec, $width1*.5/$p0v_proj_p1s)]) ];
-			#my $p10ev= [ vec_add($p1ev, [vec_scale($p0_vec, $width1*.5/$p0v_proj_p1s)]) ];
+		my %exits_by_vec= map { 0+$_->{side} => $_ } values %$isec;
+		my @exits= map $exits_by_vec{0+$_}, $center->sort_vectors_by_heading(map $_->{side}, values %$isec);
+		my @isec_corners;
+		for (0 .. $#exits) {
+			my ($e0, $e1)= @exits[$_-1, $_];
+			# Find the point at which $exit->{vec}*$pct + $exit->{side} + $prev_exit->{side} falls onto the
+			# plane along $prev_exit->{vec}.  Then, $exit->{vec}*$pct + $exit->{side} is the vertex.
+			my $e1v_proj_e0s= abs($e0->{side}->project($e1->{vec}));
+			my $e0v_proj_e1s= abs($e1->{side}->project($e0->{vec}));
+			my $p0ev= $e0->{vec}->clone->scale($e0->{width}*.5/$e0v_proj_e1s)->add($center);
+			my $p10ev= $e1->{vec}->clone->scale($e1->{width}*.5/$e1v_proj_e0s)->add($p0ev);
+			push @isec_corners, $p10ev;
 		}
+		# For each line segment around the perimiter of the intersection, clip the adjacent road polygon
+		for (0 .. $#exits) {
+			my $edge_plane= $isec_corners[$_]->cross($isec_corners[$_-1])->normalize;
+			$exits[$_-1]{poly}->clip_to_planes($edge_plane);
+		}
+		# Then add the intersection polygon
+		push @result, { entity => undef, polygons => [ polygon(@isec_corners) ] };
 	}
-	# Then clip polygons to the BBox
-	$polygons= $self->_clip_triangles($polygons, \@plane_clip)
-		if @plane_clip;
-	return $polygons;
+	return \@result;
 }
 
+# Generate polygons for a segment's path, starting from $isec0 and ending at $isec1
+# If either intersection was a 2-node and the other path has data, then continue form that.
 sub _generate_route_segment_polygons {
-	my ($self, $segment, $start_isec, $end_isec)= @_;
+	my ($self, $segment, $isec0, $isec1)= @_;
+	my $path_id= $segment->path->id;
+	my $adj0_path_id= (keys %$isec0 == 2? (grep { $_ != $path_id } keys %$isec0)[0] : undef);
+	my $adj1_path_id= (keys %$isec1 == 2? (grep { $_ != $path_id } keys %$isec1)[0] : undef);
 	
-	# TODO: for each intersection, calculate:
-	#   point
-	#   exit vector (toward next path point)
-	#   side unit vector (toward road's right-hand)
-	#   road width
-	
+	# Generate cartesian coordinates from each lat,lon pair
 	my @path= map vector_latlon(@$_), @{ $segment->path->seq };
 	# Iterate from an intersection with known t_pos, if possible.
-	if (defined $start_isec->{t_pos}) {
-		# forward iteration from a previous processed segment
-		$prev_side_unit= $start_isec->{
+	# Else default to iterating forward.
+	if ($adj1_path_id && defined $isec1->{$adj1_path_id}{t_pos} &&
+		!($adj0_path_id && defined $isec0->{$adj0_path_id}{t_pos})
+	) {
+		@path= reverse @path;
+		($isec0, $adj0_path_id, $isec1, $adj1_path_id)= ($isec1, $adj1_path_id, $isec0, $adj0_path_id);
 	}
-	else {
-	}
-	my ($t_pos, $t_scale, $clip_plane, $clip_end, $prev_poly, $prev_side_unit)=
-		@{$plot_state}{qw( t_pos t_scale clip_start clip_end prev_poly prev_side_unit )};
-	my $width_2= $self->calc_road_width($segment) * .5;
-	my @polygons;
-	# If caller gives clip_plane, it is assumed the previous polygon was already clipped.
-	# If caller gives prev_poly, it means we are continuing another segment and previous
-	#   still needs extended and clipped.  Previous is assumed to be a quad with vertices
-	#   [-2] and [-1] being un-clipped.
-	$prev_side_unit= undef if $clip_plane;
+	my $prev_info= $adj0_path_id? $isec0->{$adj0_path_id} : undef;
+	my $prev_side= $prev_info? $prev_info->{side} : undef;
+	my $prev_poly= $prev_info? $prev_info->{poly} : undef;
+	my $t_pos= $isec0->{$path_id}{t_pos} //= ($prev_info->{t_pos} || 0);
+	my $width= $isec0->{$path_id}{width} //= $self->calc_road_width($segment);
+	$isec0->{$path_id}{point} //= $path[0];
+	my $width_2= $width * .5;
+	my ($side, $vec, $wvec, @polygons);
 	$path[0]->set_st(0.5, $t_pos || 0);
 	$t_scale ||= 1/($self->lane_width/$self->earth_radius);
-	for (1..$#path) {
-		my ($p0, $p1)= @path[$_-1, $_];
-		my $vec= $p1->clone->sub($p0);
+	my $p0= shift @path;
+	for my $p1 (@path) {
+		$vec= $p1->clone->sub($p0);
 		my $veclen= $vec->mag;
 		# The texture 't' coordinate will progress at a rate of $t_scale to the length of the vector.
 		$vec->set_st(0, $veclen * $t_scale);
 		$p1->set_st(0.5, $p0->t + $vec->t);
 		# Now calculate vector to right-hand side of road
-		my $side_unit= $vec->cross($p0)->normalize;
+		$side= $vec->cross($p0)->normalize;
 		# Side vec is unit length.  Now calculate the offset of half the width of the road
-		my $side= $side_unit->clone->scale($width_2)->set_st(.5,0);
+		$wvec= $side->clone->scale($width_2)->set_st(.5,0);
 		#printf STDERR "# p0=(%.8f,%.8f,%.8f, %.4f,%.4f) p1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$p0, @$p1;
 		#printf STDERR "# vec=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$vec;
 		#printf STDERR "# side=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$side;
 		# If there is a previous clipping plane, clip against that.
 		# Else if there is a previous side vector, compute the clipping plane from that.
-		if ($prev_side_unit) {
+		if ($prev_side) {
 			# The clipping plane follows the sum of the two side vectors, so the plane vector
 			# is the cross product of their sum.
-			$clip_plane= $side_unit->clone->add($prev_side_unit)->cross($p0)
+			$clip_plane= $side->clone->add($prev_side)->cross($p0)
 				->set_projection_origin($p0);
 			# Also clip the previous polygon
-			($polygons[-1] || $prev_poly)->clip_to_planes($clip_plane);
+			$prev_poly->clip_to_planes($clip_plane) if $prev_poly;
 			$clip_plane->scale(-1); # invert, for clipping current polygon
 		}
 		
@@ -241,27 +259,36 @@ sub _generate_route_segment_polygons {
 			$p0= $p0->clone->sub($vec_overhang);
 		#}
 		#if ($_ < $#path || $clip_end || !defined $clip_end) {
-			$vec_overhang //= $vec->clone->normalize->scale($width_2);
+		#	$vec_overhang //= $vec->clone->normalize->scale($width_2);
 			$p1= $p1->clone->add($vec_overhang);
 		#}
 		#printf STDERR "# vec_overhang=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @{$vec_overhang||[0,0,0,0,0]};
 		#printf STDERR "# p0=(%.8f,%.8f,%.8f, %.4f,%.4f) p1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @$p0, @$p1;
 		my $rect= polygon(
-			$p0->clone->sub($side), $p0->clone->add($side),
-			$p1->clone->add($side), $p1->clone->sub($side),
+			$p0->clone->sub($wvec), $p0->clone->add($wvec),
+			$p1->clone->add($wvec), $p1->clone->sub($wvec),
 		);
 		#printf STDERR "# v0=(%.8f,%.8f,%.8f, %.4f,%.4f) v1=(%.8f,%.8f,%.8f, %.4f,%.4f)\n", @{$rect->[0]}, @{$rect->[1]};
 		$rect->clip_to_planes($clip_plane) if $clip_plane;
 		push @polygons, $rect;
-		$prev_side_unit= $side_unit;
+		# If this was the first polygon, save the side vec and polygon ref in the intersection data
+		if ($_ == 1) {
+			$isec0->{$path_id}{vec}   //= $vec;
+			$isec0->{$path_id}{side}  //= $side;
+			$isec0->{$path_id}{poly}  //= $rect;
+		}
+		($p0, $prev_side)= ($p1, $side);
 	}
 	if (@polygons) {
-		# Finally, clip by $clip_end if caller gave us one
-		$polygons[-1]->clip_to_planes($clip_end) if $clip_end;
-		$plot_state->{t_pos}= $path[-1]->t;
-		$plot_state->{prev_poly}= $polygons[-1];
-		$plot_state->{prev_side_unit}= $prev_side_unit;
+		# Save some things into the end-intersection data
+		$isec1->{$path_id}{point} //= $path[-1];
+		# vec and side vec need inverted to be exiting intersection rather than entering.
+		$isec1->{$path_id}{vec}   //= $vec->clone->scale(-1);
+		$isec1->{$path_id}{side}  //= $side->clone->scale(-1);
+		$isec1->{$path_id}{poly}  //= $polygons[-1];
 	}
+	$isec1->{$path_id}{width} //= $width;
+	$isec1->{$path_id}{t_pos} //= $t_pos;
 	return \@polygons;
 }
 
