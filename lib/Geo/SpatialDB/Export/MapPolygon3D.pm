@@ -51,27 +51,7 @@ has lane_width   => is => 'rw', default => sub { 3 }; # meters
 
 =head1 METHODS
 
-=head2 latlon_to_cartesian
-
-Convert a series of C<< [$lat,$lon] >> into a flat list of C<< ($x,$y,$z) >>.
-
 =cut
-
-# Returns a coderef which calculates
-#   ($x, $y, $z)= $coderef->([$lat, $lon]);
-sub _latlon_to_xyz_coderef {
-	my $self= shift;
-	my $scale= deg2rad(1 / $self->spatial_db->latlon_scale);
-	return sub {
-		spherical_to_cartesian( 1, $_[1] * $scale, pip2 - $_[0] * $scale )
-	};
-}
-
-sub latlon_to_cartesian {
-	my $self= shift;
-	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
-	map { $latlon_to_xyz->($_) } @_;
-}
 
 sub calc_road_width {
 	my ($self, $route_segment)= @_;
@@ -80,15 +60,14 @@ sub calc_road_width {
 
 sub generate_route_lines {
 	my ($self, $geo_search_result, %opts)= @_;
-	my @lines;
-	my $cb= $opts{callback} // sub { push @lines, [ @_ ] };
+	my @line_strips;
+	my $cb= $opts{callback} // sub { push @line_strips, [@_] };
 	my $latlon_clip= $opts{latlon_clip};
-	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
 	for my $ent (values %{ $geo_search_result->{entities} }) {
 		if ($ent->isa('Geo::SpatialDB::RouteSegment')) {
 			my $path= $ent->path
 				or next;
-			$cb->($ent, [ map { $latlon_to_xyz->($_) } @$_ ])
+			$cb->($ent, map vector_latlon($_), @$_)
 				for $latlon_clip? @{ $self->_latlon_clip($latlon_clip, $path) } : $path;
 		}
 	}
@@ -190,8 +169,7 @@ sub _generate_route_segment_polygons {
 	#   side unit vector (toward road's right-hand)
 	#   road width
 	
-	my $latlon_to_xyz= $self->_latlon_to_xyz_coderef;
-	my @path= map vector($latlon_to_xyz->(@$_)), @{ $segment->path->seq };
+	my @path= map vector_latlon(@$_), @{ $segment->path->seq };
 	# Iterate from an intersection with known t_pos, if possible.
 	if (defined $start_isec->{t_pos}) {
 		# forward iteration from a previous processed segment
@@ -303,11 +281,10 @@ sub _latlon_clip {
 sub _bbox_to_clip_planes {
 	my ($self, $bbox)= @_;
 	my ($lat0, $lon0, $lat1, $lon1)= @$bbox;
-	my $to_xyz= $self->_latlon_to_xyz_coderef;
 	# CCW around region
 	my @corners= (
-		vector($to_xyz->($lat0,$lon0)), vector($to_xyz->($lat0,$lon1)),
-		vector($to_xyz->($lat1,$lon1)), vector($to_xyz->($lat1,$lon0))
+		vector_latlon($lat0,$lon0), vector_latlon($lat0,$lon1),
+		vector_latlon($lat1,$lon1), vector_latlon($lat1,$lon0)
 	);
 	# Planes always have D=0 (of AX+BY+CZ=D) since they pass through the origin.
 	return (
