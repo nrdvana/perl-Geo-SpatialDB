@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use Carp 'croak';
 use Exporter 'import';
-use Math::Trig qw( spherical_to_cartesian deg2rad );
+use Math::Trig qw( spherical_to_cartesian pi );
 our @EXPORT_OK= qw( vector vector_latlon );
 
 =head1 SYNOPSIS
@@ -132,7 +132,9 @@ sub new {
 	bless \@vec, ref($class)||$class;
 }
 sub new_latlon {
-	$_[0]->new(spherical_to_cartesian( 1, deg2rad($_[2]), deg2rad(90-$_[1]) ));
+	@_ == 3 && !ref $_[1] or croak "usage: Vector->new_latlon(lat,lon)";
+	my ($class, $lat, $lon)= @_;
+	bless [ spherical_to_cartesian( 1, $lon*pi/180, (90-$lat)*pi/180 ) ], ref($class)||$class;
 }
 
 sub clone {
@@ -219,9 +221,7 @@ sub normalize {
 	my $mag_sq= $_[0][0] * $_[0][0] + $_[0][1] * $_[0][1] + $_[0][2] * $_[0][2];
 	if ($mag_sq && $mag_sq != 1) {
 		my $scale= 1/sqrt($mag_sq);
-		$_[0][0] *= $scale;
-		$_[0][1] *= $scale;
-		$_[0][2] *= $scale;
+		$_ *= $scale for @{ $_[0] };
 	}
 	$_[0]
 }

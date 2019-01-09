@@ -6,18 +6,17 @@ use lib "$FindBin::Bin/../lib";
 use OpenGL::Sandbox qw( -V1 :all glLoadIdentity GL_LINES GL_LINE_STRIP GL_LINE_LOOP );
 use Math::Trig qw( deg2rad );
 use Geo::SpatialDB;
+use Geo::SpatialDB::RouteSegment;
+use Geo::SpatialDB::Path;
 use Geo::SpatialDB::Export::MapPolygon3D;
+use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector_latlon';
 my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' }, latlon_scale => 1);
 my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
-my $xyz= $map3d->_latlon_to_xyz_coderef;
-sub llxyz { $xyz->(@_) }
 
-my $gl= make_context;
 sub sin360 { sin(deg2rad(shift)) }
 sub cos360 { cos(deg2rad(shift)) }
 sub meter_arc() { 360 / 40075000; } # a meter of earth's surface, in degrees
 
-setup_projection( top => .000005, bottom => -.000005, ortho => 1, near => -1, far => 1, z => 0);
 my $v2_angle= 0;
 my @segments= (
 	Geo::SpatialDB::RouteSegment->new(
@@ -29,10 +28,11 @@ my @segments= (
 		lanes => 2,
 	),
 );
+
+make_context;
+setup_projection( top => .000005, bottom => -.000005, ortho => 1, near => -1, far => 1, z => 0);
 while (1) {
-	$gl->swap_buffers;
-	$gl->begin_frame;
-	glLoadIdentity;
+	next_frame;
 	#trans 0,0,-1.5;
 	rotate x => -90;
 	rotate z => 90;
@@ -50,27 +50,25 @@ while (1) {
 	);
 	@{ $segments[1]->path->seq->[1] }= @pt2;
 	render_elbow(\@segments);
-	$gl->end_frame;
 }
-undef $gl;
 
 sub render_elbow {
 	my $segments= shift;
 	for (@$segments) {
 		# View the line segment
 		setcolor '#770077';
-		plot_xyz(GL_LINE_STRIP, map llxyz(@$_), @{ $_->path->seq });
+		plot_xyz(GL_LINE_STRIP, map vector_latlon(@$_)->xyz, @{ $_->path->seq });
 	}
 	my @polygons;
-	my $state= {};
-	for (0..$#$segments) {
-		$state->{start_clip}= $_? undef : 0;
-		$state->{end_clip}= $_ == $#$segments? 0 : undef;
-		push @polygons, @{ $map3d->_generate_route_segment_polygons($segments->[$_], $state) };
+	my $search_result= {
+		entities => { map +( $_ => $_ ), @segments },
+	};
+	my $to_render= $map3d->generate_route_polygons($search_result);
+	for (@$to_render) {
+		setcolor '#77FF77';
+		plot_xyz(GL_LINE_LOOP, map $_->xyz, @$_)
+			for @{ $_->{polygons} };
 	}
-	setcolor '#77FF77';
-	plot_xyz(GL_LINE_LOOP, map $_->xyz, @$_)
-		for @polygons;
 	
 	# 1. Calculate the unit-length "side" vectors for each segment.
 	# 2. Find the projection of each vector along the other's unit-side.
@@ -127,15 +125,15 @@ sub globe {
 		$list->compile(sub {
 			setcolor '#44FF44';
 			for my $lon (1..90) {
-				plot_xyz(GL_LINE_STRIP, map llxyz($_, $lon), 0..360);
+				plot_xyz(GL_LINE_STRIP, map vector_latlon($_, $lon)->xyz, 0..360);
 			}
 			setcolor '#FF4444';
 			for my $lon (91..180) {
-				plot_xyz(GL_LINE_STRIP, map llxyz($_, $lon), 0..360);
+				plot_xyz(GL_LINE_STRIP, map vector_latlon($_, $lon)->xyz, 0..360);
 			}
 			setcolor '#4444FF';
 			for my $lat (-80..89) {
-				plot_xyz(GL_LINE_STRIP, map llxyz($lat, $_), 0..360);
+				plot_xyz(GL_LINE_STRIP, map vector_latlon($lat, $_)->xyz, 0..360);
 			}
 		});
 		$list;

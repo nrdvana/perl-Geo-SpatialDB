@@ -87,6 +87,7 @@ has type_filter_regex => ( is => 'lazy' );
 has render_config     => ( is => 'rw' );
 
 sub _build_type_filter_regex {
+	my $self= shift;
 	return qr// unless @{ $self->type_filters || [] };
 	my $re= join '|', map { ref $_->{type}? $_->{type} : qr/\Q$_->{type}\E/ } @{ $self->type_filters };
 	return qr/$re/;
@@ -95,7 +96,7 @@ sub _build_type_filter_regex {
 sub add_entity_to_tile {
 	my ($self, $layer, $tile_id, $entity)= @_;
 	my $stor= $self->storage;
-	$bucket_key= 'T'.$layer->id.'.'.$tile_id;
+	my $bucket_key= 'T'.$layer->id.'.'.$tile_id;
 	my $bucket= $stor->get($bucket_key) // {};
 	my %seen;
 	$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $entity->id ];

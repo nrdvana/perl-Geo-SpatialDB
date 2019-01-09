@@ -2,15 +2,16 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
 use Geo::SpatialDB;
+use Geo::SpatialDB::RouteSegment;
+use Geo::SpatialDB::Path;
 use Geo::SpatialDB::Export::MapPolygon3D;
-use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector';
+use Geo::SpatialDB::Export::MapPolygon3D::Vector qw/ vector vector_latlon /;
 use Geo::SpatialDB::Export::MapPolygon3D::Polygon 'polygon';
-my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' }, latlon_scale => 1);
+my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' });
 my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
 
 subtest latlon_to_xyz => \&test_latlon_to_xyz;
 sub test_latlon_to_xyz {
-	my $ll2xyz= $map3d->_latlon_to_xyz_coderef;
 	my @tests= (
 		[ [  0,  0], [ 1, 0, 0] ],
 		[ [ 90,  0], [ 0, 0, 1] ],
@@ -24,7 +25,7 @@ sub test_latlon_to_xyz {
 	for (@tests) {
 		my ($latlon, $xyz)= @$_;
 		my $name= sprintf '(%3d,%3d)', @$latlon;
-		is_within( [ $ll2xyz->(@$latlon) ], $xyz, .000000001, $name );
+		is_within( [ vector_latlon(@$latlon)->xyz ], $xyz, .000000001, $name );
 	}
 	done_testing;
 }
@@ -49,7 +50,7 @@ sub test_clip_plane_from_bbox {
 	done_testing;
 }
 
-#subtest clip_line_segments => \&test_clip_line_segments;
+subtest clip_line_segments => \&test_clip_line_segments;
 sub test_clip_line_segments {
 	# Now test the code that clips lines against a set of planes
 	my @tests= (
@@ -64,7 +65,7 @@ sub test_clip_line_segments {
 	);
 	for (@tests) {
 		my ($name, $line, $bbox, $clipped_line)= @$_;
-		my @planes= $map3d->_bbox_to_planes($bbox);
+		my @planes= $map3d->_bbox_to_clip_planes($bbox);
 		my $clipped= $map3d->_clip_line_segments([$line], \@planes);
 		is_within( (@$clipped? $clipped->[0] : []), $clipped_line, .000000001, $name );
 	}
@@ -122,29 +123,28 @@ sub test_clip_triangle_to_plane {
 	}
 }
 
-#subtest path_to_xyz => \&test_path_to_xyz;
+subtest path_to_xyz => \&test_path_to_xyz;
 sub test_path_to_xyz {
 	my $rseg= Geo::SpatialDB::RouteSegment->new(
 		id => 'foo',
 		path => [ [ 40.01, 70.01 ], [ 40.02, 70.02 ] ]
 	);
 	my $paths= $map3d->generate_route_lines({ entities => { foo => $rseg } });
-	is( $#$paths, 0, 'one path' );
-	is( $#{ $paths->[0][1] }, 1, 'two verticies' );
+	is( scalar @$paths, 1, 'one path' );
+	is( scalar @{ $paths->[0]{line_strip} }, 2, 'two verticies' ) or diag explain $paths;
 	is_within(
-		$paths->[0][1],
+		$paths->[0]{line_strip},
 		[
 			[ 0.261838633349351, 0.719786587993401, 0.642921299873136 ],
 			[ 0.261674657326358, 0.719726808351777, 0.64305497047523 ],
 		],
 		.000000001,
 		'vertex values',
-	);
+	) or diag explain $paths;
 }
 
 subtest path_to_polygons => \&test_path_to_polygons;
 sub test_path_to_polygons {
-	my $ll2xyz= $map3d->_latlon_to_xyz_coderef;
 	my $lw= $map3d->lane_width/$map3d->earth_radius; # lane-width
 	my @tests= (
 		[ 'single path segment',
@@ -152,8 +152,31 @@ sub test_path_to_polygons {
 			[[
 				[ 1, 0, $lw, 0, 0 ],
 				[ 1, 0, -$lw, 1, 0 ],
-				vector($ll2xyz->(0, 0.0001))->add([ 0, 0,-$lw ])->set_st(1,3.70649755),
-				vector($ll2xyz->(0, 0.0001))->add([ 0, 0, $lw ])->set_st(0,3.70649755),
+				vector_latlon(0, 0.0001)->add([ 0, 0,-$lw ])->set_st(1,3.70649755),
+				vector_latlon(0, 0.0001)->add([ 0, 0, $lw ])->set_st(0,3.70649755),
+			]]
+		],
+		[ 'single path segment reversed',
+			[ [ 0,0.000100 ], [ 0,0 ] ],
+			[[
+				vector_latlon(0, 0.0001)->add([ 0, 0,-$lw ])->set_st(0,0),
+				vector_latlon(0, 0.0001)->add([ 0, 0, $lw ])->set_st(1,0),
+				[ 1, 0, $lw, 1, 3.70649755 ],
+				[ 1, 0, -$lw, 0, 3.70649755 ],
+			]]
+		],
+		[ '90 degree elbow',
+			[ [ 0,0 ], [ 0,0.000100 ], [0.000100,0.000100] ],
+			[[
+				vector_latlon(0, 0.0001)->add([ 0, -$lw, $lw ])->set_st(0,2.70649755),
+				[ 1, 0, $lw, 0, 0 ],
+				[ 1, 0, -$lw, 1, 0 ],
+				vector_latlon(0, 0.0001)->add([ 0,  $lw,-$lw ])->set_st(1,4.70649755),
+			],[
+				vector_latlon(0, 0.0001)->add([ 0, -$lw, $lw ])->set_st(0,4.70649755),
+				vector_latlon(0, 0.0001)->add([ 0,  $lw,-$lw ])->set_st(1,2.70649755),
+				vector_latlon(0.0001, 0.0001)->add([ 0,  $lw, 0 ])->set_st(1,7.41299511),
+				vector_latlon(0.0001, 0.0001)->add([ 0, -$lw, 0 ])->set_st(0,7.41299511),
 			]]
 		],
 	);
@@ -163,9 +186,12 @@ sub test_path_to_polygons {
 			lanes => 2,
 			path => Geo::SpatialDB::Path->new( id => 0, seq => $path ),
 		);
-		my $polys= $map3d->_generate_route_segment_polygons($rseg);
-		is( scalar @$polys, scalar @$expected, "$name - polygon count" );
-		is_within( $polys, $expected, 0.00000001, "$name - polygons" );
+		my $intersection0= {};
+		my $intersection1= {};
+		my $polys= $map3d->_generate_route_segment_polygons($rseg, $intersection0, $intersection1);
+		is( scalar @$polys, scalar @$expected, "$name - polygon count = ".scalar(@$expected) );
+		is_within( $polys, $expected, 0.00000001, "$name - polygons" )
+			or diag explain $polys;
 	}
 }
 

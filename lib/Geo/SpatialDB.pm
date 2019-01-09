@@ -148,7 +148,7 @@ sub add_entity {
 sub _layer_tile_add_entity {
 	my ($self, $layer, $tile_id, $entity)= @_;
 	my $stor= $self->storage;
-	$bucket_key= 'T'.$layer->id.'.'.$tile_id;
+	my $bucket_key= 'T'.$layer->id.'.'.$tile_id;
 	my $bucket= $stor->get($bucket_key) // {};
 	my %seen;
 	$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $entity->id ];
