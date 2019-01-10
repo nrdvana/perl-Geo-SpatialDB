@@ -182,13 +182,8 @@ sub test_path_to_polygons {
 	);
 	for (@tests) {
 		my ($name, $path, $expected)= @$_;
-		my $rseg= Geo::SpatialDB::RouteSegment->new(
-			lanes => 2,
-			path => Geo::SpatialDB::Path->new( id => 0, seq => $path ),
-		);
-		my $intersection0= {};
-		my $intersection1= {};
-		my $polys= $map3d->_generate_route_segment_polygons($rseg, $intersection0, $intersection1);
+		my @vecpath= map vector_latlon(@$_), @$path;
+		my $polys= $map3d->_generate_polygons_for_path(\@vecpath, undef, { width => $lw*2 }, {}, undef);
 		is( scalar @$polys, scalar @$expected, "$name - polygon count = ".scalar(@$expected) );
 		is_within( $polys, $expected, 0.00000001, "$name - polygons" )
 			or diag explain $polys;

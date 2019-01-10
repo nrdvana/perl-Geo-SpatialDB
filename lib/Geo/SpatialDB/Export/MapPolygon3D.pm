@@ -138,8 +138,8 @@ sub generate_route_polygons {
 		# route segments must have more than one vertex for any of the rest of the code to work
 		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$ent->path->seq} > 1) {
 			my ($start, $end)= @{$ent->endpoint_keys};
-			$intersections{$start}{$ent->path->id}= { seg => $ent, at =>  0, peer => $end };
-			$intersections{$end}{$ent->path->id}=   { seg => $ent, at => -1, peer => $start };
+			$intersections{$start}{$ent->path->id}= { seg => $ent, at =>  0, peer => $end, width => $self->calc_road_width($ent) };
+			$intersections{$end}{$ent->path->id}=   { seg => $ent, at => -1, peer => $start, width => $self->calc_road_width($ent) };
 		}
 	}
 	# Process all the routes, attempting to follow paths from intersections
@@ -147,20 +147,43 @@ sub generate_route_polygons {
 	# as if it was a single path.
 	for my $isec (sort { scalar(keys %$b) <=> scalar(keys %$a) } values %intersections) {
 		# Process each segment that comes from this intersection
-		for (keys %$isec) {
+		for (reverse sort keys %$isec) {
+			next if $path_polygons{$_};
 			my $cur_path_id= $_;
-			my $prev_path_id= undef;
 			my $cur_isec= $isec;
-			while (1) {
-				# Skip if already built
-				last if exists $path_polygons{$cur_path_id};
+			# Follow path backward as far as the intersections form a single path and hasn't
+			# been rendered.  (so that we start at a true intersection, for texture coordinates)
+			while (scalar keys %$cur_isec == 2) {
+				my $prev_path_id= (grep { $_ != $cur_path_id } keys %$cur_isec)[0];
+				last if $path_polygons{$prev_path_id};
+				$cur_isec= $intersections{ $cur_isec->{$prev_path_id}{peer} };
+				$cur_path_id= $prev_path_id;
+			}
+			# Iterate forward along path so long as it hasn't been rendered and continues
+			# through intersections of 2 segments.
+			while (!exists $path_polygons{$cur_path_id}) {
 				my $next_isec= $intersections{ $cur_isec->{$cur_path_id}{peer} };
-				my $polygons= $self->_generate_route_segment_polygons(
-					$cur_isec->{$cur_path_id}{seg},
-					$cur_isec->{$cur_path_id}{at} == 0? ( $cur_isec, $next_isec ) : ( $next_isec, $cur_isec )
-				);
+				
+				# collect the intersection-info for the start and end of the segment and
+				# its adjacent segments.  Adjacent segments are only used if the intersection
+				# has exactly two segments joined to it (i.e. a continuous path)
+				my $start_info= $cur_isec->{$cur_path_id};
+				my $end_info= $next_isec->{$cur_path_id};
+				my $prev_info= (scalar keys %$cur_isec != 2)? undef
+					: $cur_isec->{(grep { $_ != $cur_path_id } keys %$cur_isec)[0]};
+				my $next_info= (scalar keys %$next_isec != 2)? undef
+					: $next_isec->{(grep { $_ != $cur_path_id } keys %$next_isec)[0]};
+				# Generate cartesian coordinates from each lat,lon pair
+				my $seg= $cur_isec->{$cur_path_id}{seg};
+				my @path= map vector_latlon(@$_), @{ $seg->path->seq };
+				# If the next_info defines a t_pos (texture position) but the prev_info does not,
+				# reverse the direction we iterate.  But also, need to reverse the path according
+				# to the $start_info->{at} parameter.
+				my $polygons= ($next_info && defined $next_info->{t_pos} && !($prev_info && defined $prev_info->{t_pos}))
+					? $self->_generate_polygons_for_path(($start_info->{at}==0? [ reverse @path ] : \@path), $next_info, $end_info, $start_info, $prev_info)
+					: $self->_generate_polygons_for_path(($start_info->{at}==0? \@path : [ reverse @path ]), $prev_info, $start_info, $end_info, $next_info);
 				$path_polygons{$cur_path_id}= $polygons;
-				push @result, { entity => $cur_isec->{$cur_path_id}{seg}, polygons => $polygons };
+				push @result, { entity => $seg, polygons => $polygons };
 				
 				# If this segment ends in an "intersection" of two roads, continue rendering
 				# the next segment as well so that the textures line up.
@@ -199,41 +222,21 @@ sub generate_route_polygons {
 	return \@result;
 }
 
-# Generate polygons for a segment's path, starting from $isec0 and ending at $isec1
-# If either intersection was a 2-node and the other path has data, then continue form that.
-# isec0 and isec1 may be empty hashes, and will get filled with relevant data.
-sub _generate_route_segment_polygons {
-	my ($self, $segment, $isec0, $isec1)= @_;
-	my $path_id= $segment->path->id;
-	my $adj0_count= scalar keys %$isec0;
-	my $adj1_count= scalar keys %$isec1;
-	my $adj0_path_id= $adj0_count == 2? (grep { $_ != $path_id } keys %$isec0)[0] : undef;
-	my $adj1_path_id= $adj1_count == 2? (grep { $_ != $path_id } keys %$isec1)[0] : undef;
+sub _generate_polygons_for_path {
+	my ($self, $path, $prev_info, $start_info, $end_info, $next_info)= @_;
+	my $width=   $start_info->{width}   // croak "start_info->{width} is required";
+	my $t_pos=   $start_info->{t_pos}   //= ($prev_info && $prev_info->{t_pos} || 0);
+	my $t_scale= $start_info->{t_scale} //= 1/($self->lane_width/$self->earth_radius);
+	# copy start_info constants to end_info
+	$end_info->{$_} //= $start_info->{$_} for qw( width t_pos t_scale );
 	
-	# Generate cartesian coordinates from each lat,lon pair
-	my @path= map vector_latlon(@$_), @{ $segment->path->seq };
-	
-	# Iterate from an intersection with known t_pos, if possible.
-	# Else default to iterating forward.
-	if (defined $adj1_path_id && defined $isec1->{$adj1_path_id}{t_pos} &&
-		!(defined $adj0_path_id && defined $isec0->{$adj0_path_id}{t_pos})
-	) {
-		@path= reverse @path;
-		($isec0, $adj0_count, $adj0_path_id, $isec1, $adj1_count, $adj1_path_id)=
-			($isec1, $adj1_count, $adj1_path_id, $isec0, $adj0_count, $adj0_path_id);
-	}
-	
-	# If have a prev segment, carry over variables as if they were part of this loop
-	my $prev_info= $adj0_path_id? $isec0->{$adj0_path_id} : undef;
+	my ($side, $vec, $wvec, $clip_plane, @polygons);
 	my $prev_side= $prev_info && $prev_info->{side}? $prev_info->{side}->clone->scale(-1) : undef;
 	my $prev_poly= $prev_info? $prev_info->{poly} : undef;
-	my $t_scale= $isec0->{$path_id}{t_scale} //= 1/($self->lane_width/$self->earth_radius);
-	my $t_pos= $isec0->{$path_id}{t_pos} //= ($prev_info && $prev_info->{t_pos} || 0);
-	my $width= $isec0->{$path_id}{width} //= $self->calc_road_width($segment);
-	my ($side, $vec, $wvec, $clip_plane, @polygons);
-	$path[0]->set_st(0.5, $t_pos || 0);
-	for (1..$#path) {
-		my ($p0, $p1)= ($path[$_-1], $path[$_]);
+	$path->[0]->set_st(0.5, $t_pos || 0);
+	for (1..$#$path) {
+		# First, calculate everything about this segment of the path
+		my ($p0, $p1)= @{$path}[$_-1 .. $_];
 		$vec= $p1->clone->sub($p0);
 		my $veclen= $vec->mag;
 		# The texture 't' coordinate will progress at a rate of $t_scale to the length of the vector.
@@ -243,8 +246,8 @@ sub _generate_route_segment_polygons {
 		$side= $vec->cross($p0)->normalize;
 		# Side vec is unit length.  Now calculate the offset of half the width of the road
 		$wvec= $side->clone->scale($width * .5)->set_st(.5,0);
-		# If there is a previous clipping plane, clip against that.
-		# Else if there is a previous side vector, compute the clipping plane from that.
+		
+		# If there is a known previous segment, calculate the clipping plane and clip it.
 		if ($prev_side) {
 			# The clipping plane follows the sum of the two side vectors, so the plane vector
 			# is the cross product of their sum.
@@ -260,42 +263,42 @@ sub _generate_route_segment_polygons {
 		# If the angle is too acute, there will be a gap, but it would be too much effort to
 		# round those corners here.  Better to adjust the input path to add more vertices.
 		my $vec_overhang= $vec->clone->normalize->scale($width);
-		$p0= $p0->clone->sub($vec_overhang) if $clip_plane || $adj0_count > 1;
-		$p1= $p1->clone->add($vec_overhang) if $p1 != $path[-1] || $adj1_count > 1;
-		my $rect= polygon(
+		$p0= $p0->clone->sub($vec_overhang) if $_ > 1 || $prev_info;
+		$p1= $p1->clone->add($vec_overhang) if $_ < $#$path || $next_info;
+		my $poly= polygon(
 			$p0->clone->sub($wvec), $p0->clone->add($wvec),
 			$p1->clone->add($wvec), $p1->clone->sub($wvec),
 		);
-		$rect->clip_to_planes($clip_plane) if $clip_plane;
-		push @polygons, $rect;
-		# If this was the first polygon, save the side vec and polygon ref in the intersection data
+		$poly->clip_to_planes($clip_plane) if $clip_plane;
+		push @polygons, $poly;
+		
+		# If this was the first polygon, save the rendering info
 		if ($_ == 1) {
-			$isec0->{$path_id}{point} //= $path[0];
-			$isec0->{$path_id}{vec}   //= $vec;
-			$isec0->{$path_id}{side}  //= $side;
-			$isec0->{$path_id}{poly}  //= $rect;
+			$start_info->{point} //= $path->[0];
+			$start_info->{vec}   //= $vec;
+			$start_info->{side}  //= $side;
+			$start_info->{poly}  //= $poly;
 		}
-		($prev_side, $prev_poly)= ($side, $rect);
+		($prev_side, $prev_poly)= ($side, $poly);
 	}
+	# Save the rendering info about the last segment
 	if (@polygons) {
-		# Save some things into the end-intersection data
-		$isec1->{$path_id}{point} //= $path[-1];
+		$end_info->{point} //= $path->[-1];
+		$end_info->{poly}  //= $polygons[-1];
 		# vec and side vec need inverted to be exiting intersection rather than entering.
-		$isec1->{$path_id}{vec}   //= $vec->clone->scale(-1);
-		$isec1->{$path_id}{side}  //= $side->clone->scale(-1);
-		$isec1->{$path_id}{poly}  //= $polygons[-1];
-		# If there is a following segment and it was already rendered, calculate the clip
-		# plane and clip against it.
-		if ($adj1_path_id && defined $isec1->{$adj1_path_id}{side}) {
-			$clip_plane= $side->clone->add($isec1->{$adj1_path_id}{side})->cross($path[-1])
-				->set_projection_origin($path[-1]);
+		$end_info->{vec}   //= $vec->clone->scale(-1);
+		$end_info->{side}  //= $side->clone->scale(-1);
+		
+		# Then, if the next segment has been calculated, calculate the clip plane and
+		# clip both that one and the end of this one.
+		if ($next_info && $next_info->{side}) {
+			$clip_plane= $side->clone->add($next_info->{side})->cross($path->[-1])
+				->set_projection_origin($path->[-1]);
 			$polygons[-1]->clip_to_plane($clip_plane);
-			$isec1->{$adj1_path_id}{poly}->clip_to_plane($clip_plane->scale(-1))
-				if $isec1->{$adj1_path_id}{poly};
+			$next_info->{poly}->clip_to_plane($clip_plane->scale(-1))
+				if $next_info->{poly};
 		}
 	}
-	$isec1->{$path_id}{width} //= $width;
-	$isec1->{$path_id}{t_pos} //= $t_pos;
 	return \@polygons;
 }
 
