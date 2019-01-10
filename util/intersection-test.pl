@@ -3,7 +3,9 @@ use strict;
 use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
-use OpenGL::Sandbox qw( -V1 :all glLoadIdentity GL_LINES GL_LINE_STRIP GL_LINE_LOOP );
+use OpenGL::Sandbox qw( -V1 :all glLoadIdentity glEnable glDisable glBlendFunc glShadeModel glClearColor
+	GL_LINES GL_LINE_STRIP GL_LINE_LOOP GL_POLYGON GL_SMOOTH GL_SRC_ALPHA GL_ONE GL_TEXTURE_2D GL_BLEND GL_COLOR_MATERIAL );
+$res->resource_root_dir("$FindBin::Bin/../share");
 use Math::Trig qw( deg2rad );
 use Geo::SpatialDB;
 use Geo::SpatialDB::RouteSegment;
@@ -31,6 +33,8 @@ my @segments= (
 
 make_context;
 setup_projection( top => .000005, bottom => -.000005, ortho => 1, near => -1, far => 1, z => 0);
+glEnable(GL_TEXTURE_2D);
+glClearColor(.1,.1,.1,1);
 while (1) {
 	next_frame;
 	#trans 0,0,-1.5;
@@ -65,8 +69,9 @@ sub render_elbow {
 	};
 	my $to_render= $map3d->generate_route_polygons($search_result);
 	for (@$to_render) {
-		setcolor '#77FF77';
-		plot_xyz(GL_LINE_LOOP, map $_->xyz, @$_)
+		$res->tex('road-2lane')->bind;
+		setcolor '#FFFFFF';
+		plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_)
 			for @{ $_->{polygons} };
 	}
 	

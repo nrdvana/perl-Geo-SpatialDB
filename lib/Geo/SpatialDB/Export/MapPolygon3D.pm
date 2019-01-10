@@ -226,7 +226,7 @@ sub _generate_polygons_for_path {
 	my ($self, $path, $prev_info, $start_info, $end_info, $next_info)= @_;
 	my $width=   $start_info->{width}   // croak "start_info->{width} is required";
 	my $t_pos=   $start_info->{t_pos}   //= ($prev_info && $prev_info->{t_pos} || 0);
-	my $t_scale= $start_info->{t_scale} //= 1/($self->lane_width/$self->earth_radius);
+	my $t_scale= $start_info->{t_scale} //= 1/$width;
 	# copy start_info constants to end_info
 	$end_info->{$_} //= $start_info->{$_} for qw( width t_pos t_scale );
 	
