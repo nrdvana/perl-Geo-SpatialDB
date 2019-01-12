@@ -1,4 +1,4 @@
-package Geo::SpatialDB::Export::MapPolygon3D::Polygon;
+package Geo::SpatialDB::Math::Polygon;
 use strict;
 use warnings;
 use Exporter 'import';

@@ -1,9 +1,9 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
-use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector', 'vector_latlon';
+use Geo::SpatialDB::Math qw/ vector vector_latlon /;
 
-my $v0= new_ok( 'Geo::SpatialDB::Export::MapPolygon3D::Vector', [ 0,0,0 ] );
+my $v0= new_ok( 'Geo::SpatialDB::Math::Vector', [ 0,0,0 ] );
 
 subtest ctor_read_write => sub {
 	my $v= vector(0,0);

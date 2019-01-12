@@ -1,8 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
-use Geo::SpatialDB::Export::MapPolygon3D::Polygon 'polygon';
-use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector';
+use Geo::SpatialDB::Math qw/ polygon vector /;
 
 my @tests= (
 	[ 'square in half',

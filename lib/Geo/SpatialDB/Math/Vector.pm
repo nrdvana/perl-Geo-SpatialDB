@@ -1,4 +1,4 @@
-package Geo::SpatialDB::Export::MapPolygon3D::Vector;
+package Geo::SpatialDB::Math::Vector;
 use strict;
 use warnings;
 use Carp 'croak';

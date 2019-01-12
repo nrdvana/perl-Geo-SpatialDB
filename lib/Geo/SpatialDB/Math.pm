@@ -3,7 +3,9 @@ use strict;
 use warnings;
 use Exporter 'import';
 use Math::Trig 'pi', 'pip2', 'spherical_to_cartesian';
-our @EXPORT_OK= qw( latlon_rad_to_range latlon_to_xyz latlon_to_earth_xyz );
+use Geo::SpatialDB::Math::Vector qw( vector vector_latlon );
+use Geo::SpatialDB::Math::Polygon qw( polygon );
+our @EXPORT_OK= qw( latlon_rad_to_range latlon_to_xyz latlon_to_earth_xyz vector vector_latlon polygon );
 our %EXPORT_TAGS= ( 'all' => \@EXPORT_OK );
 
 sub latlon_rad_to_range {

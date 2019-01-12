@@ -5,8 +5,7 @@ use Geo::SpatialDB;
 use Geo::SpatialDB::RouteSegment;
 use Geo::SpatialDB::Path;
 use Geo::SpatialDB::Export::MapPolygon3D;
-use Geo::SpatialDB::Export::MapPolygon3D::Vector qw/ vector vector_latlon /;
-use Geo::SpatialDB::Export::MapPolygon3D::Polygon 'polygon';
+use Geo::SpatialDB::Math qw/ vector vector_latlon polygon /;
 my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' });
 my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
 

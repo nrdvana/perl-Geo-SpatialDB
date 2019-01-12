@@ -5,9 +5,7 @@ use Carp;
 use Try::Tiny;
 use Log::Any '$log';
 use Time::HiRes 'time';
-use Math::Trig 'deg2rad','spherical_to_cartesian', 'pip2';
-use Geo::SpatialDB::Export::MapPolygon3D::Vector qw/ vector vector_latlon /;
-use Geo::SpatialDB::Export::MapPolygon3D::Polygon 'polygon';
+use Geo::SpatialDB::Math qw( vector vector_latlon polygon );
 
 # ABSTRACT: Export map data as polygons in 3D
 
