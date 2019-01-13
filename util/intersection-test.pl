@@ -11,7 +11,7 @@ use Geo::SpatialDB;
 use Geo::SpatialDB::RouteSegment;
 use Geo::SpatialDB::Path;
 use Geo::SpatialDB::Export::MapPolygon3D;
-use Geo::SpatialDB::Export::MapPolygon3D::Vector 'vector_latlon';
+use Geo::SpatialDB::Math 'vector_latlon';
 my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' }, latlon_scale => 1);
 my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
 
@@ -20,6 +20,7 @@ sub cos360 { cos(deg2rad(shift)) }
 sub meter_arc() { 360 / 40075000; } # a meter of earth's surface, in degrees
 
 my $v2_angle= 0;
+my $v3_angle= 0;
 my @segments= (
 	Geo::SpatialDB::RouteSegment->new(
 		path => Geo::SpatialDB::Path->new(id => 1, seq => [ [meter_arc*100,0], [0,0], [0,0] ]),
@@ -27,6 +28,10 @@ my @segments= (
 	),
 	Geo::SpatialDB::RouteSegment->new(
 		path => Geo::SpatialDB::Path->new(id => 2, seq => [ [0,0], [0,0] ]),
+		lanes => 2,
+	),
+	Geo::SpatialDB::RouteSegment->new(
+		path => Geo::SpatialDB::Path->new(id => 3, seq => [ [0,0], [0,0] ]),
 		lanes => 2,
 	),
 );
@@ -43,7 +48,8 @@ while (1) {
 	#scale 1, 1, 1;
 	globe();
 	$v2_angle -= 20/60; # degrees per 1/60 second
-	my @pt1= (  # 100 meter road, rotated around the intersection
+	$v3_angle -= 10/60;
+	my @pt1= (  # 20 meter road, rotated around the intersection
 		cos360($v2_angle) * 20 * meter_arc,
 		sin360($v2_angle) * 20 * meter_arc
 	);
@@ -53,6 +59,11 @@ while (1) {
 		$pt1[1] + sin360($v2_angle * 2) * 40 * meter_arc
 	);
 	@{ $segments[1]->path->seq->[1] }= @pt2;
+	my @pt3= ( # 30 meter rd, rotated around the intersection at half the speed
+		cos360($v3_angle) * 30 * meter_arc,
+		sin360($v3_angle) * 30 * meter_arc
+	);
+	@{ $segments[2]->path->seq->[1] }= @pt3;
 	render_elbow(\@segments);
 }
 
@@ -68,9 +79,9 @@ sub render_elbow {
 		entities => { map +( $_ => $_ ), @segments },
 	};
 	my $to_render= $map3d->generate_route_polygons($search_result);
+	$res->tex('road-2lane')->bind;
+	setcolor '#FFFFFF';
 	for (@$to_render) {
-		$res->tex('road-2lane')->bind;
-		setcolor '#FFFFFF';
 		plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_)
 			for @{ $_->{polygons} };
 	}
