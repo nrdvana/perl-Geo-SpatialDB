@@ -137,26 +137,44 @@ sub generate_route_polygons {
 		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$ent->path->seq} > 1) {
 			my ($start, $end)= @{$ent->endpoint_keys};
 			$intersections{$start}{$ent->path->id}= { seg => $ent, at =>  0, peer => $end, width => $self->calc_road_width($ent) };
-			$intersections{$end}{$ent->path->id}=   { seg => $ent, at => -1, peer => $start, width => $self->calc_road_width($ent) };
+			$intersections{$end  }{$ent->path->id}= { seg => $ent, at => -1, peer => $start, width => $self->calc_road_width($ent) };
 		}
 	}
 	# Process all the routes, attempting to follow paths from intersections
 	# with more than 3 roads first, passing through intersections with 2 paths
 	# as if it was a single path.
-	for my $isec (sort { scalar(keys %$b) <=> scalar(keys %$a) } values %intersections) {
+	for my $isec_id (sort {
+			((keys %{$intersections{$a}}) > 2? 0 : 1) <=> ((keys %{$intersections{$b}}) > 2? 0 : 1)
+			or $a cmp $b
+		} keys %intersections
+	) {
+		my $isec= $intersections{$isec_id};
 		# Process each segment that comes from this intersection
-		for (reverse sort keys %$isec) {
-			next if $path_polygons{$_};
-			my $cur_path_id= $_;
-			my $cur_isec= $isec;
-			# Follow path backward as far as the intersections form a single path and hasn't
-			# been rendered.  (so that we start at a true intersection, for texture coordinates)
-			while (scalar keys %$cur_isec == 2) {
-				my $prev_path_id= (grep { $_ != $cur_path_id } keys %$cur_isec)[0];
+		# Process whole road segment chains, starting from the intersection with the lowest ID.
+		# In most cases, this will happen naturally from the sort order of the top loop,
+		# but in cases of non-intersections of just 2 segments, we need to backtrack to each
+		# end of the chain and iterate from whichever is lower.
+		if (keys %$isec == 2) {
+			my ($pathid0, $pathid1)= keys %$isec;
+			my ($isecid0, $isecid1)= ($isec->{$pathid0}{peer}, $isec->{$pathid1}{peer});
+			while (keys %{$intersections{$isecid0}} == 2) {
+				my ($prev_path_id)= grep { $_ != $pathid0 } keys %{$intersections{$isecid0}};
 				last if $path_polygons{$prev_path_id};
-				$cur_isec= $intersections{ $cur_isec->{$prev_path_id}{peer} };
-				$cur_path_id= $prev_path_id;
+				$isecid0= $intersections{$isecid0}{$prev_path_id}{peer};
+				$pathid0= $prev_path_id;
 			}
+			while (keys %{$intersections{$isecid1}} == 2) {
+				my ($next_path_id)= grep { $_ != $pathid1 } keys %{$intersections{$isecid1}};
+				last if $path_polygons{$next_path_id};
+				$isecid1= $intersections{$isecid1}{$next_path_id}{peer};
+				$pathid1= $next_path_id;
+			}
+			# then iterate from whichever has highest ID
+			$isec= $intersections{$isecid0 le $isecid1? $isecid0 : $isecid1};
+		}
+		for (keys %$isec) {
+			my $cur_isec= $isec;
+			my $cur_path_id= $_;
 			# Iterate forward along path so long as it hasn't been rendered and continues
 			# through intersections of 2 segments.
 			while (!exists $path_polygons{$cur_path_id}) {
