@@ -58,7 +58,6 @@ for the road vertices.
 sub calc_road_width {
 	my ($self, $route_segment)= @_;
 	$route_segment->lanes * $self->lane_width / $self->surface_radius;
-	$route_segment->lanes * $self->lane_width / $self->surface_radius;
 }
 
 =head2 generate_route_lines
@@ -133,10 +132,10 @@ sub generate_route_polygons {
 	# Need to know all intersections of route segments, in order to render the intersections correctly
 	for my $ent (values %{ $geo_search_result->{entities} }) {
 		# route segments must have more than one vertex for any of the rest of the code to work
-		if ($ent->isa('Geo::SpatialDB::Path::RouteSegment') && @{$ent->latlon_seq} > 1) {
-			my ($start, $end)= @{$ent->endpoint_keys};
-			$intersections{$start}{$ent->path->id}= { seg => $ent, at =>  0, peer => $end, width => $self->calc_road_width($ent) };
-			$intersections{$end  }{$ent->path->id}= { seg => $ent, at => -1, peer => $start, width => $self->calc_road_width($ent) };
+		if ($ent->isa('Geo::SpatialDB::Entity::RouteSegment') && @{$ent->latlon_seq} > 1) {
+			my ($start, $end)= ($ent->endpoint0, $ent->endpoint1);
+			$intersections{$start}{$ent->id}= { seg => $ent, at =>  0, peer => $end, width => $self->calc_road_width($ent) };
+			$intersections{$end  }{$ent->id}= { seg => $ent, at => -1, peer => $start, width => $self->calc_road_width($ent) };
 		}
 	}
 	# Process all the routes, attempting to follow paths from intersections

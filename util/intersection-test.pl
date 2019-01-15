@@ -8,7 +8,8 @@ use OpenGL::Sandbox qw( -V1 :all glLoadIdentity glEnable glDisable glBlendFunc g
 $res->resource_root_dir("$FindBin::Bin/../share");
 use Math::Trig qw( deg2rad );
 use Geo::SpatialDB;
-use Geo::SpatialDB::RouteSegment;
+use Geo::SpatialDB::Entity::RouteSegment;
+sub RouteSegment { Geo::SpatialDB::Entity::RouteSegment->new(@_) }
 use Geo::SpatialDB::Path;
 use Geo::SpatialDB::Export::MapPolygon3D;
 use Geo::SpatialDB::Math 'vector_latlon';
@@ -22,16 +23,19 @@ sub meter_arc() { 360 / 40075000; } # a meter of earth's surface, in degrees
 my $v2_angle= 0;
 my $v3_angle= 0;
 my @segments= (
-	Geo::SpatialDB::RouteSegment->new(
-		path => Geo::SpatialDB::Path->new(id => 1, seq => [ [meter_arc*100,0], [0,0], [0,0] ]),
+	RouteSegment->new(
+		id => 1,
+		latlon_seq => [ (meter_arc*100,0), (0,0), (0,0) ],
 		lanes => 2,
 	),
-	Geo::SpatialDB::RouteSegment->new(
-		path => Geo::SpatialDB::Path->new(id => 2, seq => [ [0,0], [0,0] ]),
+	RouteSegment->new(
+		id => 2,
+		latlon_seq => [ (0,0), (0,0) ],
 		lanes => 2,
 	),
-	Geo::SpatialDB::RouteSegment->new(
-		path => Geo::SpatialDB::Path->new(id => 3, seq => [ [0,0], [0,0] ]),
+	RouteSegment->new(
+		id => 3,
+		latlon_seq => [ (0,0), (0,0) ],
 		lanes => 2,
 	),
 );
@@ -53,27 +57,29 @@ while (1) {
 		cos360($v2_angle) * 20 * meter_arc,
 		sin360($v2_angle) * 20 * meter_arc
 	);
-	@{ $segments[1]->path->seq->[0] }= @{ $segments[0]->path->seq->[-1] }= @pt1;
+	$segments[1]->latlon_seq->@[0,1]= $segments[0]->latlon_seq->@[4,5]= @pt1;
 	my @pt2= (
 		$pt1[0] + cos360($v2_angle * 2) * 40 * meter_arc,
 		$pt1[1] + sin360($v2_angle * 2) * 40 * meter_arc
 	);
-	@{ $segments[1]->path->seq->[1] }= @pt2;
+	$segments[1]->latlon_seq->@[2,3]= @pt2;
 	my @pt3= ( # 30 meter rd, rotated around the intersection at half the speed
 		cos360($v3_angle) * 30 * meter_arc,
 		sin360($v3_angle) * 30 * meter_arc
 	);
-	@{ $segments[2]->path->seq->[1] }= @pt3;
+	$segments[2]->latlon_seq->@[2,3]= @pt3;
 	render_elbow(\@segments);
 }
 
 sub render_elbow {
 	my $segments= shift;
+	glDisable(GL_TEXTURE_2D);
 	for (@$segments) {
 		# View the line segment
 		setcolor '#770077';
-		plot_xyz(GL_LINE_STRIP, map vector_latlon(@$_)->xyz, @{ $_->path->seq });
+		plot_xyz(GL_LINE_STRIP, map $_->xyz, $_->latlon_seq_pts->@*);
 	}
+	glEnable(GL_TEXTURE_2D);
 	my @polygons;
 	my $search_result= {
 		entities => { map +( $_ => $_ ), @segments },

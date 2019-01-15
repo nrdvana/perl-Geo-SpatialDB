@@ -1,7 +1,7 @@
 package Geo::SpatialDB::Entity::RouteSegment;
 use Moo 2;
 use Carp;
-use Geo::SpatialDB::Math 'llbox';
+use Geo::SpatialDB::Math 'llbox', 'vector_latlon';
 use namespace::clean;
 
 # ABSTRACT: A piece of a Route, represented by a contiguous sequence of points
@@ -66,6 +66,11 @@ has restrictions   => ( is => 'rw' );
 has routes         => ( is => 'rw' );
 
 has latlon_seq     => ( is => 'lazy' );
+sub latlon_seq_pts {
+	my $seq= shift->latlon_seq;
+	[ map vector_latlon($seq->[$_*2], $seq->[$_*2+1]), 0..(@$seq/2)-1 ]
+}
+
 has endpoint0      => ( is => 'lazy' );
 has endpoint1      => ( is => 'lazy' );
 
