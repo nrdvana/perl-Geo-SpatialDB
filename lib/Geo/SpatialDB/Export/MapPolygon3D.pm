@@ -5,7 +5,8 @@ use Carp;
 use Try::Tiny;
 use Log::Any '$log';
 use Time::HiRes 'time';
-use Geo::SpatialDB::Math qw( vector vector_latlon polygon );
+use Geo::SpatialDB::Math qw( vector vector_latlon polygon earth_radius );
+use namespace::clean;
 
 # ABSTRACT: Export map data as polygons in 3D
 
@@ -32,20 +33,15 @@ Galapagos west of Brazil is cartesian (0,-1,0).  (0,0) near the Gulf of Guinea i
 
 Reference to a Geo::SpatialDB from which the rendered entities came.
 
-=head2 earth_radius
-
-Earth radius, in Meters.  This helps when converting to/from the earth-radius unit vectors that
-this module returns for all cartesian coordinates.
-
 =head2 lane_width
 
 The width of one lane of road, in meters.
 
 =cut
 
-has spatial_db   => is => 'rw', required => 1;
-has earth_radius => is => 'rw', default => sub { 6371000 }; # meters
-has lane_width   => is => 'rw', default => sub { 3 }; # meters
+has spatial_db     => is => 'rw', required => 1;
+has surface_radius => is => 'rw', default => sub { earth_radius }; # meters
+has lane_width     => is => 'rw', default => sub { 3 }; # meters
 
 =head1 METHODS
 
@@ -61,7 +57,8 @@ for the road vertices.
 
 sub calc_road_width {
 	my ($self, $route_segment)= @_;
-	$route_segment->lanes * $self->lane_width / $self->earth_radius;
+	$route_segment->lanes * $self->lane_width / $self->surface_radius;
+	$route_segment->lanes * $self->lane_width / $self->surface_radius;
 }
 
 =head2 generate_route_lines
@@ -86,11 +83,13 @@ sub generate_route_lines {
 	my @entries;
 	my $latlon_clip= $opts{latlon_clip};
 	for my $ent (values %{ $geo_search_result->{entities} }) {
-		if ($ent->isa('Geo::SpatialDB::RouteSegment')) {
-			my $path= $ent->path
+		if ($ent->isa('Geo::SpatialDB::Entity::RouteSegment')) {
+			my $path= $ent->latlon_seq
 				or next;
-			push @entries, { entity => $ent, line_strip => [ map vector_latlon(@$_), @$_ ] }
-				for $latlon_clip? @{ $self->_latlon_clip($latlon_clip, $path) } : $path;
+			for my $p ($latlon_clip? @{ $self->_latlon_clip($latlon_clip, $path) } : $path) {
+				my @vectors= map vector_latlon($p->[$_*2], $p->[$_*2+1]), 0 .. (@$p/2)-1;
+				push @entries, { entity => $ent, line_strip => \@vectors }
+			}
 		}
 	}
 	\@entries;
@@ -114,7 +113,7 @@ sub generate_route_polygons {
 	my ($self, $geo_search_result, %opts)= @_;
 	my @plane_clip= $opts{latlon_clip}? $self->_bbox_to_planes($opts{latlon_clip}) : ();
 	my %intersections; # points-of-intersection, keyed by "endpoint_keys", and values are path IDs that meet there.
-	my %path_polygons;
+	my %seg_polygons;
 	# %isec= (
 	#   $endpoint_id => {
 	#     $path_id => {
@@ -134,7 +133,7 @@ sub generate_route_polygons {
 	# Need to know all intersections of route segments, in order to render the intersections correctly
 	for my $ent (values %{ $geo_search_result->{entities} }) {
 		# route segments must have more than one vertex for any of the rest of the code to work
-		if ($ent->isa('Geo::SpatialDB::RouteSegment') && @{$ent->path->seq} > 1) {
+		if ($ent->isa('Geo::SpatialDB::Path::RouteSegment') && @{$ent->latlon_seq} > 1) {
 			my ($start, $end)= @{$ent->endpoint_keys};
 			$intersections{$start}{$ent->path->id}= { seg => $ent, at =>  0, peer => $end, width => $self->calc_road_width($ent) };
 			$intersections{$end  }{$ent->path->id}= { seg => $ent, at => -1, peer => $start, width => $self->calc_road_width($ent) };
@@ -155,56 +154,57 @@ sub generate_route_polygons {
 		# but in cases of non-intersections of just 2 segments, we need to backtrack to each
 		# end of the chain and iterate from whichever is lower.
 		if (keys %$isec == 2) {
-			my ($pathid0, $pathid1)= keys %$isec;
-			my ($isecid0, $isecid1)= ($isec->{$pathid0}{peer}, $isec->{$pathid1}{peer});
+			my ($segid0, $segid1)= keys %$isec;
+			my ($isecid0, $isecid1)= ($isec->{$segid0}{peer}, $isec->{$segid1}{peer});
 			while (keys %{$intersections{$isecid0}} == 2) {
-				my ($prev_path_id)= grep { $_ != $pathid0 } keys %{$intersections{$isecid0}};
-				last if $path_polygons{$prev_path_id};
-				$isecid0= $intersections{$isecid0}{$prev_path_id}{peer};
-				$pathid0= $prev_path_id;
+				my ($prev_seg_id)= grep { $_ != $segid0 } keys %{$intersections{$isecid0}};
+				last if $seg_polygons{$prev_seg_id};
+				$isecid0= $intersections{$isecid0}{$prev_seg_id}{peer};
+				$segid0= $prev_seg_id;
 			}
 			while (keys %{$intersections{$isecid1}} == 2) {
-				my ($next_path_id)= grep { $_ != $pathid1 } keys %{$intersections{$isecid1}};
-				last if $path_polygons{$next_path_id};
-				$isecid1= $intersections{$isecid1}{$next_path_id}{peer};
-				$pathid1= $next_path_id;
+				my ($next_seg_id)= grep { $_ != $segid1 } keys %{$intersections{$isecid1}};
+				last if $seg_polygons{$next_seg_id};
+				$isecid1= $intersections{$isecid1}{$next_seg_id}{peer};
+				$segid1= $next_seg_id;
 			}
 			# then iterate from whichever has highest ID
 			$isec= $intersections{$isecid0 le $isecid1? $isecid0 : $isecid1};
 		}
 		for (keys %$isec) {
 			my $cur_isec= $isec;
-			my $cur_path_id= $_;
+			my $cur_seg_id= $_;
 			# Iterate forward along path so long as it hasn't been rendered and continues
 			# through intersections of 2 segments.
-			while (!exists $path_polygons{$cur_path_id}) {
-				my $next_isec= $intersections{ $cur_isec->{$cur_path_id}{peer} };
+			while (!exists $seg_polygons{$cur_seg_id}) {
+				my $next_isec= $intersections{ $cur_isec->{$cur_seg_id}{peer} };
 				
 				# collect the intersection-info for the start and end of the segment and
 				# its adjacent segments.  Adjacent segments are only used if the intersection
 				# has exactly two segments joined to it (i.e. a continuous path)
-				my $start_info= $cur_isec->{$cur_path_id};
-				my $end_info= $next_isec->{$cur_path_id};
+				my $start_info= $cur_isec->{$cur_seg_id};
+				my $end_info= $next_isec->{$cur_seg_id};
 				my $prev_info= (scalar keys %$cur_isec != 2)? undef
-					: $cur_isec->{(grep { $_ != $cur_path_id } keys %$cur_isec)[0]};
+					: $cur_isec->{(grep { $_ != $cur_seg_id } keys %$cur_isec)[0]};
 				my $next_info= (scalar keys %$next_isec != 2)? undef
-					: $next_isec->{(grep { $_ != $cur_path_id } keys %$next_isec)[0]};
+					: $next_isec->{(grep { $_ != $cur_seg_id } keys %$next_isec)[0]};
 				# Generate cartesian coordinates from each lat,lon pair
-				my $seg= $cur_isec->{$cur_path_id}{seg};
-				my @path= map vector_latlon(@$_), @{ $seg->path->seq };
+				my $seg= $cur_isec->{$cur_seg_id}{seg};
+				my $seq= $seg->latlon_seq;
+				my @path= map vector_latlon(@{$seq}[$_*2, $_*2+1]), 0 .. (@$seq/2)-1;
 				# If the next_info defines a t_pos (texture position) but the prev_info does not,
 				# reverse the direction we iterate.  But also, need to reverse the path according
 				# to the $start_info->{at} parameter.
 				my $polygons= ($next_info && defined $next_info->{t_pos} && !($prev_info && defined $prev_info->{t_pos}))
 					? $self->_generate_polygons_for_path(($start_info->{at}==0? [ reverse @path ] : \@path), $next_info, $end_info, $start_info, $prev_info)
 					: $self->_generate_polygons_for_path(($start_info->{at}==0? \@path : [ reverse @path ]), $prev_info, $start_info, $end_info, $next_info);
-				$path_polygons{$cur_path_id}= $polygons;
+				$seg_polygons{$cur_seg_id}= $polygons;
 				push @result, { entity => $seg, polygons => $polygons };
 				
 				# If this segment ends in an "intersection" of two roads, continue rendering
 				# the next segment as well so that the textures line up.
 				last if scalar(keys %$next_isec) != 2;
-				($cur_path_id)= grep $_ != $cur_path_id, keys %$next_isec;
+				($cur_seg_id)= grep $_ != $cur_seg_id, keys %$next_isec;
 				$cur_isec= $next_isec;
 			}
 		}

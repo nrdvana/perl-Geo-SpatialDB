@@ -37,36 +37,39 @@ the entity, but need to exist in a separate namespace than the object
 attributes so they're called "tags" here.  The object may choose to expose
 perl methods for various tags.
 
-=cut
-
-has id   => ( is => 'rw' );
-has type => ( is => 'rw' );
-has tags => ( is => 'rw' );
-
-=head1 METHODS
-
 =head2 tag
 
   my $tag_value= $entity->tag($name);
 
 Convenient accessor for tags->{$name};
 
+=head2 components
+
+Return an arrayref of components which this entity is composed of.
+
+=cut
+
+has id   => ( is => 'rw' );
+has type => ( is => 'rw' );
+has tags => ( is => 'rw' );
+
+sub components {}
+
+=head1 METHODS
+
 =head2 features_at_resolution
 
-  my @features= $entity->features_at_resolution($meters);
+  my @areas= $entity->features_at_resolution($meters);
+
+Return a list of areas (either LLBox or LLRad) which this entity occupies at the given
+resolution.
 
 Each entitiy class should implement a mechanism for dividing up the entity
 into fragments which have significance at a range of C<$meters>.  If the
 entity is not significant at a distance of C<$meters> then this should return
 an empty list.  For instance, a major highway might be significant at a
 distance of 50km, but could be left out at 100km even if the highway itself
-is longer than 100km.  Each feature should consist of:
-
-  {
-    lat    => $lat,     # latitude of center of feature
-    lon    => $lon,     # longitude of center of feature
-    radius => $meters,  # radius of feature
-  }
+is longer than 100km.  
 
 If an entity is composed of smaller entities, and the entity *is* significant
 at the given resolution but its components are not, it may query the component
@@ -76,7 +79,21 @@ components do not.
 
 =cut
 
-sub TO_JSON {
+sub features_at_resolution {
+	return;
+}
+
+=head2 get_ctor_args
+
+Return a perl data structure which can be passed back to the constructor for this object's
+class to preserve the value of the object.  This data should also be valid for JSON encoding.
+
+=cut
+
+sub TO_JSON { shift->get_ctor_args }
+
+# This is a generic implementation.  Subclasses probably need to override it.
+sub get_ctor_args {
 	my $self= shift;
 	my %data= %$self;
 	for (keys %data) {
@@ -85,20 +102,9 @@ sub TO_JSON {
 			or !defined $data{$_}
 			or (ref $data{$_} eq 'HASH' && !keys %{ $data{$_} });
 	}
+	ref $_ && ref($_)->can('get_ctor_args') && ($_= $_->get_ctor_args)
+		for values %data;
 	\%data;
-}
-
-sub tag {
-	my ($self, $key)= @_;
-	return $self->{tags}{$key};
-}
-
-sub features_at_resolution {
-	return;
-}
-
-sub components {
-	return;
 }
 
 1;

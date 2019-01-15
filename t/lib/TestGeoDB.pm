@@ -73,7 +73,7 @@ sub _is_elem_within {
 		}
 	} elsif (!ref $actual && !ref $expected) {
 		if (abs($actual - $expected) > $tolerance) {
-			main::note( sprintf("element %s: actual %.3e - expected %.3e = %.3e",
+			main::note( sprintf("element %s: actual %.11e - expected %.5e = %.5e",
 				$elem, $actual, $expected, $actual-$expected));
 			return;
 		} else {

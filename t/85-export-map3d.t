@@ -2,10 +2,11 @@ use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
 use Geo::SpatialDB;
-use Geo::SpatialDB::RouteSegment;
-use Geo::SpatialDB::Path;
+use Geo::SpatialDB::Entity::RouteSegment;
 use Geo::SpatialDB::Export::MapPolygon3D;
 use Geo::SpatialDB::Math qw/ vector vector_latlon polygon /;
+sub RouteSegment { Geo::SpatialDB::Entity::RouteSegment->new(@_) }
+
 my $sdb= Geo::SpatialDB->new(storage => { CLASS => 'Memory' });
 my $map3d= Geo::SpatialDB::Export::MapPolygon3D->new(spatial_db => $sdb);
 
@@ -124,9 +125,9 @@ sub test_clip_triangle_to_plane {
 
 subtest path_to_xyz => \&test_path_to_xyz;
 sub test_path_to_xyz {
-	my $rseg= Geo::SpatialDB::RouteSegment->new(
+	my $rseg= RouteSegment->new(
 		id => 'foo',
-		path => [ [ 40.01, 70.01 ], [ 40.02, 70.02 ] ]
+		latlon_seq => [ (40.01, 70.01), (40.02, 70.02) ]
 	);
 	my $paths= $map3d->generate_route_lines({ entities => { foo => $rseg } });
 	is( scalar @$paths, 1, 'one path' );
@@ -144,15 +145,15 @@ sub test_path_to_xyz {
 
 subtest path_to_polygons => \&test_path_to_polygons;
 sub test_path_to_polygons {
-	my $lw= $map3d->lane_width/$map3d->earth_radius; # lane-width
+	my $lw= $map3d->lane_width / $map3d->surface_radius; # lane-width
 	my @tests= (
 		[ 'single path segment',
 			[ [ 0,0 ], [ 0,0.000100 ] ],
 			[[
-				[ 1, 0, $lw, 0, 0 ],
+				[ 1, 0,  $lw, 0, 0 ],
 				[ 1, 0, -$lw, 1, 0 ],
-				vector_latlon(0, 0.0001)->add([ 0, 0,-$lw ])->set_st(1,3.70649755),
-				vector_latlon(0, 0.0001)->add([ 0, 0, $lw ])->set_st(0,3.70649755),
+				vector_latlon(0, 0.0001)->add([ 0, 0,-$lw ])->set_st(1,1.85343494),
+				vector_latlon(0, 0.0001)->add([ 0, 0, $lw ])->set_st(0,1.85343494),
 			]]
 		],
 		[ 'single path segment reversed',
@@ -160,22 +161,22 @@ sub test_path_to_polygons {
 			[[
 				vector_latlon(0, 0.0001)->add([ 0, 0,-$lw ])->set_st(0,0),
 				vector_latlon(0, 0.0001)->add([ 0, 0, $lw ])->set_st(1,0),
-				[ 1, 0, $lw, 1, 3.70649755 ],
-				[ 1, 0, -$lw, 0, 3.70649755 ],
+				[ 1, 0,  $lw, 1, 1.85343494 ],
+				[ 1, 0, -$lw, 0, 1.85343494 ],
 			]]
 		],
 		[ '90 degree elbow',
 			[ [ 0,0 ], [ 0,0.000100 ], [0.000100,0.000100] ],
 			[[
-				vector_latlon(0, 0.0001)->add([ 0, -$lw, $lw ])->set_st(0,2.70649755),
-				[ 1, 0, $lw, 0, 0 ],
+				vector_latlon(0, 0.0001)->add([ 0, -$lw, $lw ])->set_st(0,1.35343494586),
+				[ 1, 0,  $lw, 0, 0 ],
 				[ 1, 0, -$lw, 1, 0 ],
-				vector_latlon(0, 0.0001)->add([ 0,  $lw,-$lw ])->set_st(1,4.70649755),
+				vector_latlon(0, 0.0001)->add([ 0,  $lw,-$lw ])->set_st(1,2.35343494586),
 			],[
-				vector_latlon(0, 0.0001)->add([ 0, -$lw, $lw ])->set_st(0,4.70649755),
-				vector_latlon(0, 0.0001)->add([ 0,  $lw,-$lw ])->set_st(1,2.70649755),
-				vector_latlon(0.0001, 0.0001)->add([ 0,  $lw, 0 ])->set_st(1,7.41299511),
-				vector_latlon(0.0001, 0.0001)->add([ 0, -$lw, 0 ])->set_st(0,7.41299511),
+				vector_latlon(0, 0.0001)->add([ 0, -$lw, $lw ])->set_st(0,2.35343494586),
+				vector_latlon(0, 0.0001)->add([ 0,  $lw,-$lw ])->set_st(1,1.35343494586),
+				vector_latlon(0.0001, 0.0001)->add([ 0,  $lw, 0 ])->set_st(1,3.70686989174),
+				vector_latlon(0.0001, 0.0001)->add([ 0, -$lw, 0 ])->set_st(0,3.70686989174),
 			]]
 		],
 	);
