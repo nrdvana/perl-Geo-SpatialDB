@@ -25,12 +25,12 @@ my $v3_angle= 0;
 my @segments= (
 	RouteSegment->new(
 		id => 1,
-		latlon_seq => [ (meter_arc*100,0), (0,0), (0,0) ],
+		latlon_seq => [ (meter_arc*100,0), (0,0) ],
 		lanes => 2,
 	),
 	RouteSegment->new(
 		id => 2,
-		latlon_seq => [ (0,0), (0,0) ],
+		latlon_seq => [ (0,0), (0,0), (0,0) ],
 		lanes => 2,
 	),
 	RouteSegment->new(
@@ -57,12 +57,12 @@ while (1) {
 		cos360($v2_angle) * 20 * meter_arc,
 		sin360($v2_angle) * 20 * meter_arc
 	);
-	$segments[1]->latlon_seq->@[0,1]= $segments[0]->latlon_seq->@[4,5]= @pt1;
+	$segments[1]->latlon_seq->@[2,3]= @pt1;
 	my @pt2= (
 		$pt1[0] + cos360($v2_angle * 2) * 40 * meter_arc,
 		$pt1[1] + sin360($v2_angle * 2) * 40 * meter_arc
 	);
-	$segments[1]->latlon_seq->@[2,3]= @pt2;
+	$segments[1]->latlon_seq->@[4,5]= @pt2;
 	my @pt3= ( # 30 meter rd, rotated around the intersection at half the speed
 		cos360($v3_angle) * 30 * meter_arc,
 		sin360($v3_angle) * 30 * meter_arc
