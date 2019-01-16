@@ -85,11 +85,19 @@ sub render_elbow {
 		entities => { map +( $_ => $_ ), @segments },
 	};
 	my $to_render= $map3d->generate_route_polygons($search_result);
-	$res->tex('road-2lane')->bind;
 	setcolor '#FFFFFF';
 	for (@$to_render) {
-		plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_)
-			for @{ $_->{polygons} };
+		if ($_->{entity}) {
+			$res->tex('road-2lane')->bind;
+			plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_) for $_->{polygons}->@*;
+		} else {
+			glDisable(GL_TEXTURE_2D);
+			setcolor '#22FF00';
+			plot_st_xyz(GL_LINE_LOOP, map +($_->st, $_->xyz), @$_) for $_->{polygons}->@*;
+			glDisable(GL_TEXTURE_2D);
+			#$res->tex('			: 'intersection-2lane')->bind;
+			#for @{ $_->{polygons} };
+		}
 	}
 	
 	# 1. Calculate the unit-length "side" vectors for each segment.

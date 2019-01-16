@@ -231,8 +231,12 @@ sub generate_route_polygons {
 			my $edge_plane= $isec_corners[$_]->cross($isec_corners[$_-1])->normalize;
 			$exits[$_-1]{poly}->clip_to_planes($edge_plane);
 		}
-		# Then add the intersection polygon
-		push @result, { entity => undef, polygons => [ polygon(@isec_corners) ] };
+		# The intersection is composed of triangles, so that each can have separate texture coordinates
+		$center= $center->clone->set_st(0.5, 0.25);
+		my @triangles= map polygon($center, $isec_corners[$_-1]->clone->set_st(1,1), $isec_corners[$_]->clone->set_st(0,0)),
+			0 .. $#isec_corners;
+		# Then add the intersection polygons
+		push @result, { entity => undef, polygons => \@triangles };
 	}
 	return \@result;
 }

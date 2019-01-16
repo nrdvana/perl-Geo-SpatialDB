@@ -19,13 +19,13 @@ my $sdb= Geo::SpatialDB->new(
 $sdb->add_entity(
 	Geo::SpatialDB::Entity::RouteSegment->new(
 		id   => 1,
-		path => [ [1000000,1001000], [1001000,1001000] ],
+		latlon_seq => [ (1000000,1001000), (1001000,1001000) ],
 	)
 );
 $sdb->add_entity(
 	Geo::SpatialDB::Entity::RouteSegment->new(
 		id   => 2,
-		path => [ [1100000,1101000], [1101000,1101000] ],
+		latlon_seq => [ (1100000,1101000), (1101000,1101000) ],
 	)
 );
 $sdb->storage->commit;
