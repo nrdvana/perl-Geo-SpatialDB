@@ -4,8 +4,13 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use OpenGL::Sandbox qw( -V1 :all glLoadIdentity glEnable glDisable glBlendFunc glShadeModel glClearColor
-	GL_LINES GL_LINE_STRIP GL_LINE_LOOP GL_POLYGON GL_SMOOTH GL_SRC_ALPHA GL_ONE GL_TEXTURE_2D GL_BLEND GL_COLOR_MATERIAL );
+	GL_LINES GL_LINE_STRIP GL_LINE_LOOP GL_POLYGON GL_SMOOTH GL_SRC_ALPHA GL_ONE GL_TEXTURE_2D GL_BLEND GL_COLOR_MATERIAL GL_CLAMP );
+
 $res->resource_root_dir("$FindBin::Bin/../share");
+$res->tex_config({
+	'intersection-2lane' => { wrap_s => GL_CLAMP, wrap_t => GL_CLAMP },
+});
+
 use Math::Trig qw( deg2rad );
 use Geo::SpatialDB;
 use Geo::SpatialDB::Entity::RouteSegment;
@@ -91,11 +96,11 @@ sub render_elbow {
 			$res->tex('road-2lane')->bind;
 			plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_) for $_->{polygons}->@*;
 		} else {
-			glDisable(GL_TEXTURE_2D);
-			setcolor '#22FF00';
-			plot_st_xyz(GL_LINE_LOOP, map +($_->st, $_->xyz), @$_) for $_->{polygons}->@*;
-			glDisable(GL_TEXTURE_2D);
-			#$res->tex('			: 'intersection-2lane')->bind;
+			$res->tex('intersection-2lane')->bind;
+			#glDisable(GL_TEXTURE_2D);
+			#setcolor '#22FF00';
+			plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_) for $_->{polygons}->@*;
+			#glEnable(GL_TEXTURE_2D);
 			#for @{ $_->{polygons} };
 		}
 	}

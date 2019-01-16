@@ -5,6 +5,7 @@ use Carp;
 use Try::Tiny;
 use Log::Any '$log';
 use Time::HiRes 'time';
+use List::Util 'min','max';
 use Geo::SpatialDB::Math qw( vector vector_latlon polygon earth_radius );
 use namespace::clean;
 
@@ -211,30 +212,87 @@ sub generate_route_polygons {
 		# If more than 2 paths, build a polygon from the accumulated geometry,
 		# then clip the polygons at the ends of each path.
 		next unless keys %$isec > 2;
-		my $center= (values %$isec)[0]{point};  # all exits should have same point
+		my $center= (values %$isec)[0]{point}->clone->set_st(.5,.5);  # all exits should have same point
 		# Sort vectors by angle, counter-clockwise
 		my %exits_by_vec= map { 0+$_->{side} => $_ } values %$isec;
 		my @exits= map $exits_by_vec{0+$_}, $center->sort_vectors_by_heading(map $_->{side}, values %$isec);
-		my @isec_corners;
+		my $intersection_max_radius= max(map 2*$_->{width}, @exits);
+		# Calculate the point at which road edges meet, for each pair of roads
+		# If the roads are more than 180 degrees, there is no elbow, and just record undef.
+		my (@elbow_vecs, @clamped, @triangles);
 		for (0 .. $#exits) {
 			my ($e0, $e1)= @exits[$_-1, $_];
-			# Find the point at which $exit->{vec}*$pct + $exit->{side} + $prev_exit->{side} falls onto the
-			# plane along $prev_exit->{vec}.  Then, $exit->{vec}*$pct + $exit->{side} is the vertex.
-			my $e1v_proj_e0s= abs($e0->{side}->project($e1->{vec}));
-			my $e0v_proj_e1s= abs($e1->{side}->project($e0->{vec}));
-			my $p0ev= $e0->{vec}->clone->scale($e0->{width}*.5/$e0v_proj_e1s)->add($center);
-			my $p10ev= $e1->{vec}->clone->scale($e1->{width}*.5/$e1v_proj_e0s)->add($p0ev);
-			push @isec_corners, $p10ev;
+			# If angle less than 180, find intersection point of road edges
+			if ($e0->{vec}->dot($e1->{side}) >= 0) {
+				# Find the point at which $exit->{vec}*$pct + $exit->{side} + $prev_exit->{side} falls onto the
+				# plane along $prev_exit->{vec}.  Then, $exit->{vec}*$pct + $exit->{side} is the vertex.
+				my $e1v_proj_e0s= abs($e0->{side}->project($e1->{vec}));
+				my $e0v_proj_e1s= abs($e1->{side}->project($e0->{vec}));
+				my $p10ev= $e0->{vec}->clone->scale($e0->{width}*.5/$e0v_proj_e1s)->add(
+					$e1->{vec}->clone->scale($e1->{width}*.5/$e1v_proj_e0s)
+				);
+				# If two roads are very near to eachother, it can strectch the elbow point
+				# far out from the intersection.  Clamp the elbow to a maximum distance.
+				my $magnitude= $p10ev->mag;
+				if ($magnitude > $intersection_max_radius) {
+					$p10ev->scale($intersection_max_radius / $magnitude);
+					$clamped[$_]= 1;
+				}
+				$elbow_vecs[$_]= $p10ev;
+			}
+			else {
+				$elbow_vecs[$_]= undef;
+			}
 		}
-		# For each line segment around the perimiter of the intersection, clip the adjacent road polygon
+		# Now for each road, determine the distance at which it will be clipped, which is a
+		# line perpendicular to the road at the distance of the further of the two elbows,
+		# but also clamped to a maximum distance.
 		for (0 .. $#exits) {
-			my $edge_plane= $isec_corners[$_]->cross($isec_corners[$_-1])->normalize;
-			$exits[$_-1]{poly}->clip_to_planes($edge_plane);
+			my ($ebv_right, $ebv_left)= @elbow_vecs[$_, $_ - $#exits];
+			next unless $ebv_right || $ebv_left; # ignore degenrate cases of co-linear roads
+			my $accute_prev= defined $ebv_right;
+			my $accute_next= defined $ebv_left;
+			# Whichever elbow is longer, reflect it across the road so that the intersection
+			# edge is perpendicular to the road.  But, if it got clamped, then also stretch the
+			# mirrored one sideways to the edge of the road.
+			if (!$ebv_right || ($ebv_left && ($ebv_left->mag > $ebv_right->mag))) {
+				$ebv_right= $clamped[$_ - $#exits]? do { my $v= $exits[$_]{vec}->clone->normalize; $v->scale($v->project($ebv_left))->add($exits[$_]{side}->clone->scale($exits[$_]{width}*.5)) }
+					: $ebv_left->clone->reflect_across($exits[$_]{side});
+			} else {
+				$ebv_left= $clamped[$_]? do { my $v= $exits[$_]{vec}->clone->normalize; $v->scale($v->project($ebv_right))->add($exits[$_]{side}->clone->scale($exits[$_]{width}*-.5)) }
+					: $ebv_right->clone->reflect_across($exits[$_]{side});
+			}
+			
+			my @planes= ( $center->clone->add($ebv_left)->cross($center->clone->add($ebv_right))->normalize );
+			# If one edge was clamped, then the road polygon also needs clipped by the wedge
+			# of where it meets the other roads.
+			#push @planes, $center->cross($ebv_right)->normalize if $ebv_right && $clamped[$_];
+			#push @planes, $ebv_left->cross($center)->normalize if $ebv_left && $clamped[$_ - $#exits];
+			$exits[$_]{poly}->clip_to_planes(@planes);
+			
+			my $start_idx= @triangles;
+			# If not adjacent to prev triangle, add a filler wedge
+			unless ($accute_prev) {
+				my $corner= $exits[$_]{side}->clone->scale(.5 * $exits[$_]{width})->add($center)->set_st(0,0);
+				push @triangles, polygon($center, $corner, $center->clone->add($ebv_right)->set_st(1,0));
+			}
+			# Add this polygon
+			push @triangles, polygon($center, $center->clone->add($ebv_right)->set_st(1,1), $center->clone->add($ebv_left)->set_st(0,1));
+			# If not adjacent to next triangle, add a filler wedge
+			unless ($accute_next) {
+				my $corner= $exits[$_]{side}->clone->scale(-.5 * $exits[$_]{width})->add($center)->set_st(1,0);
+				push @triangles, polygon($center, $center->clone->add($ebv_left)->set_st(0,0), $corner);
+			}
+			
+			# If the new wedges aren't connected to the old wedges, add triangles to fill the gaps.
+			if ($start_idx && $triangles[$start_idx-1][2]->distance($triangles[$start_idx][1]) > 0.00000000001) {
+				splice @triangles, $start_idx, 0, polygon($center, $triangles[$start_idx-1][2]->clone->set_st(0,0), $triangles[$start_idx][1]->clone->set_st(1,0));
+			}
 		}
-		# The intersection is composed of triangles, so that each can have separate texture coordinates
-		$center= $center->clone->set_st(0.5, 0.25);
-		my @triangles= map polygon($center, $isec_corners[$_-1]->clone->set_st(1,1), $isec_corners[$_]->clone->set_st(0,0)),
-			0 .. $#isec_corners;
+		# If the final wedge doesn't connect to the first wedge, fill the gap
+		if (@triangles > 1 && $triangles[-1][2]->distance($triangles[0][1]) > 0.00000000001) {
+			push @triangles, polygon($center, $triangles[-1][2]->clone->set_st(0,0), $triangles[0][1]->clone->set_st(1,0));
+		}
 		# Then add the intersection polygons
 		push @result, { entity => undef, polygons => \@triangles };
 	}
