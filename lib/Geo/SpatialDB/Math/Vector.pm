@@ -55,9 +55,9 @@ The following accessors return l-values, which you can assign values to.
 
 =item t
 
-=item projection_offset
+=item u
 
-This is the "D" value of a vector used to represent a plane of the form C<< A x + B y + C z = D >>.
+=item v
 
 =back
 
@@ -72,7 +72,9 @@ The following "attributes" are shortcuts to access multiple fields at once:
 
 =item st
 
-=item xyzst
+=item stuv
+
+=item stxyz
 
 There are also some setter functions which return the vector, for convenient chaining:
 
@@ -94,15 +96,17 @@ sub z     : lvalue { $_[0][2] }
 sub xyz   : lvalue { @{$_[0]}[0..2] }
 sub s     : lvalue { $_[0][3] }
 sub t     : lvalue { $_[0][4] }
+sub u     : lvalue { $_[0][5] }
+sub v     : lvalue { $_[0][6] }
 sub st    : lvalue { @{$_[0]}[3..4] }
+sub stuv  : lvalue { @{$_[0]}[3..6] }
 sub xyzst : lvalue { @{$_[0]}[0..4] }
+sub stxyz : lvalue { @{$_[0]}[3,4,0,1,2] }
 
 sub set_xyz   { @{$_[0]}[0..2]= @_[1..$#_]; $_[0] }
 sub set_st    { @{$_[0]}[3..4]= @_[1..$#_]; $_[0] }
+sub set_stuv  { @{$_[0]}[3..6]= @_[1..$#_]; $_[0] }
 sub set_xyzst { @{$_[0]}[0..4]= @_[1..$#_]; $_[0] }
-
-# Abuse the vector class to include a projection offset
-sub projection_offset : lvalue { $_[0][5] }
 
 =head1 METHODS
 
@@ -283,30 +287,13 @@ sub sort_vectors_by_heading {
 		} 0..$#to_sort;
 }
 
-=head2 set_projection_origin
+=head2 project_onto
 
-Use this vector as a plane normal, by setting the C<D> value of C<< A x + B y + C z = D >>
-with the argument used as C<x,y,z> and this vector used as C<A,B,C>.
-
-=cut
-
-sub set_projection_origin {
-	$_[0][5]= $_[0]->dot($_[1]);
-	$_[0][3] ||= 0;
-	$_[0][4] ||= 0;
-	$_[0]
-}
-
-=head2 project
-
-Project another vector (point) onto this vector and subtract the projection origin, resulting
-in the distance of that point from the described plane.
+Project this vector onto a plane (or plane's normal)
 
 =cut
 
-sub project {
-	$_[0]->dot($_[1]) - ($_[0][5] || 0);
-}
+sub project_onto { $_[1]->project($_[0]) }
 
 =head2 reflect_across
 
@@ -318,5 +305,18 @@ returning this vector.
 sub reflect_across {
 	$_[0]->add($_[1]->clone->scale(-2 * $_[1]->dot($_[0])));
 }
+
+=head2 project
+
+Pretend this vector is the normal of a plane passing through the origin, and project another
+vector onto this one.
+
+This is basically just a dot product.  This allows vectors to be used interchangably with
+planes for the common case of planes based at the origin.  This vector is assumed to be
+unit-length, but this condition is not checked.
+
+=cut
+
+*project= *dot;
 
 1;

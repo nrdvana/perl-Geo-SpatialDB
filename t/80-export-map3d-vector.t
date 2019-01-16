@@ -65,8 +65,8 @@ subtest projection => sub {
 	for (@tests) {
 		my ($pt0, $v1, $pt2, $sign)= @$_;
 		# Create plane passing through pt0 and the origin, along $v1.
-		my $plane= vector(@$pt0)->cross($v1)->set_projection_origin($pt0);
-		my $d= $plane->project($pt2);
+		my $normal= vector(@$pt0)->cross($v1);
+		my $d= $normal->project(vector(@$pt2)->sub($pt0));
 		ok( $d>0 eq $sign>0 && $d<0 eq $sign<0 ) or diag "Sign mismatch: $d != $sign";
 	}
 };

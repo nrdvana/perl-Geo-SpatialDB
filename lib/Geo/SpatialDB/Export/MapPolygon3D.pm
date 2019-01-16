@@ -226,8 +226,8 @@ sub generate_route_polygons {
 			if ($e0->{vec}->dot($e1->{side}) >= 0) {
 				# Find the point at which $exit->{vec}*$pct + $exit->{side} + $prev_exit->{side} falls onto the
 				# plane along $prev_exit->{vec}.  Then, $exit->{vec}*$pct + $exit->{side} is the vertex.
-				my $e1v_proj_e0s= abs($e0->{side}->project($e1->{vec}));
-				my $e0v_proj_e1s= abs($e1->{side}->project($e0->{vec}));
+				my $e1v_proj_e0s= abs($e0->{side}->dot($e1->{vec}));
+				my $e0v_proj_e1s= abs($e1->{side}->dot($e0->{vec}));
 				my $p10ev= $e0->{vec}->clone->scale($e0->{width}*.5/$e0v_proj_e1s)->add(
 					$e1->{vec}->clone->scale($e1->{width}*.5/$e1v_proj_e0s)
 				);
@@ -256,10 +256,10 @@ sub generate_route_polygons {
 			# edge is perpendicular to the road.  But, if it got clamped, then also stretch the
 			# mirrored one sideways to the edge of the road.
 			if (!$ebv_right || ($ebv_left && ($ebv_left->mag > $ebv_right->mag))) {
-				$ebv_right= $clamped[$_ - $#exits]? do { my $v= $exits[$_]{vec}->clone->normalize; $v->scale($v->project($ebv_left))->add($exits[$_]{side}->clone->scale($exits[$_]{width}*.5)) }
+				$ebv_right= $clamped[$_ - $#exits]? do { my $v= $exits[$_]{vec}->clone->normalize; $v->scale($v->dot($ebv_left))->add($exits[$_]{side}->clone->scale($exits[$_]{width}*.5)) }
 					: $ebv_left->clone->reflect_across($exits[$_]{side});
 			} else {
-				$ebv_left= $clamped[$_]? do { my $v= $exits[$_]{vec}->clone->normalize; $v->scale($v->project($ebv_right))->add($exits[$_]{side}->clone->scale($exits[$_]{width}*-.5)) }
+				$ebv_left= $clamped[$_]? do { my $v= $exits[$_]{vec}->clone->normalize; $v->scale($v->dot($ebv_right))->add($exits[$_]{side}->clone->scale($exits[$_]{width}*-.5)) }
 					: $ebv_right->clone->reflect_across($exits[$_]{side});
 			}
 			
@@ -328,8 +328,7 @@ sub _generate_polygons_for_path {
 		if ($prev_side) {
 			# The clipping plane follows the sum of the two side vectors, so the plane vector
 			# is the cross product of their sum.
-			$clip_plane= $side->clone->add($prev_side)->cross($p0)
-				->set_projection_origin($p0);
+			$clip_plane= $side->clone->add($prev_side)->cross($p0);
 			# Also clip the previous polygon
 			$prev_poly->clip_to_planes($clip_plane) if $prev_poly;
 			$clip_plane->scale(-1); # invert, for clipping current polygon
@@ -369,8 +368,7 @@ sub _generate_polygons_for_path {
 		# Then, if the next segment has been calculated, calculate the clip plane and
 		# clip both that one and the end of this one.
 		if ($next_info && $next_info->{side}) {
-			$clip_plane= $side->clone->add($next_info->{side})->cross($path->[-1])
-				->set_projection_origin($path->[-1]);
+			$clip_plane= $side->clone->add($next_info->{side})->cross($path->[-1]);
 			$polygons[-1]->clip_to_plane($clip_plane);
 			$next_info->{poly}->clip_to_plane($clip_plane->scale(-1))
 				if $next_info->{poly};
