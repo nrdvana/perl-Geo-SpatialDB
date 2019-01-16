@@ -191,6 +191,10 @@ Return the sum-of-squares of the C<x,y,z> components of this vector.
 
 Magnitude of the vector.
 
+=head2 distance
+
+Calculate magnitude between difference of this vector and another, without modifying either.
+
 =head2 normalize
 
 Scale the vector by the inverse of its magnitude, resulting in a unit-length vector.
@@ -215,6 +219,14 @@ sub mag_sq {
 
 sub mag {
 	sqrt($_[0][0] * $_[0][0] + $_[0][1] * $_[0][1] + $_[0][2] * $_[0][2])
+}
+*magnitude= *mag;
+
+sub distance {
+	my $dx= $_[0][0] - $_[1][0];
+	my $dy= $_[0][1] - $_[1][1];
+	my $dz= $_[0][2] - $_[1][2];
+	return sqrt($dx * $dx + $dy * $dy + $dz * $dz);
 }
 
 sub normalize {
@@ -292,6 +304,17 @@ in the distance of that point from the described plane.
 
 sub project {
 	$_[0]->dot($_[1]) - ($_[0][5] || 0);
+}
+
+=head2 reflect_across
+
+Reflect a this vector across the normal of a plane (the first argument), modifying and
+returning this vector.
+
+=cut
+
+sub reflect_across {
+	$_[0]->add($_[1]->clone->scale(-2 * $_[1]->dot($_[0])));
 }
 
 1;
