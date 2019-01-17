@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use Test::More;
-
+use Geo::SpatialDB::Math 'llbox';
 use_ok 'Geo::SpatialDB::TileMapper::Rect';
 
 # This config should cause exactly 9 tiles above equator, 9 below,
@@ -28,8 +28,8 @@ my @tiles= (
 for my $test (@tiles) {
 	my ($key, $latlon)= @$test;
 	my ($lat0, $lon0, $lat1, $lon1)= @$latlon;
-	my @pts= $tmap->tile_polygon($key);
-	is_deeply( \@pts, [ $lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1 ], "tile $key" );
+	my $pts= $tmap->tile_polygon($key);
+	is_deeply( $pts, [ $lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1 ], "tile $key" );
 }
 
 for my $test (@tiles) {
@@ -45,10 +45,10 @@ for my $test (@tiles) {
 	is( $tmap->tile_at( $lat1, $lon0-360 ), $key, "wrap lon-360 tile $key" );
 }
 
-my @set= $tmap->tiles_in_range(-1,-1,1,1);
-is_deeply( [ sort { $a <=> $b } @set ], [ 288, 323, 324, 359 ], 'select across equator meridian' );
-@set= $tmap->tiles_in_range(-1,179,1,-179);
-is_deeply( [ sort { $a <=> $b } @set ], [ 8*36+17, 8*36+18, 9*36+17, 9*36+18 ], 'select across equator antimeridian' );
+my $set= $tmap->tiles_in_range(llbox(-1,-1,1,1));
+is_deeply( [ sort { $a <=> $b } @$set ], [ 288, 323, 324, 359 ], 'select across equator meridian' );
+$set= $tmap->tiles_in_range(llbox(-1,179,1,-179));
+is_deeply( [ sort { $a <=> $b } @$set ], [ 8*36+17, 8*36+18, 9*36+17, 9*36+18 ], 'select across equator antimeridian' );
 
 if ($ENV{TEST_ALL_MICRODEGREES}) {
 	subtest all_microdegrees_across_antimeridian => sub {
@@ -58,13 +58,13 @@ if ($ENV{TEST_ALL_MICRODEGREES}) {
 			for my $lon_md (0..100_000) {
 				my ($lat, $lon)= (-.05 + ($lat_md/1_000_000), 179.95 + ($lon_md/1_000_000));
 				my $tile= $tmap->tile_at($lat, $lon);
-				my @tiles= $tmap->tiles_in_range($lat - .0005, $lon - .0005, $lat + .0005, $lon + .0005);
-				if (@tiles > 4) {
+				my $tiles= $tmap->tiles_in_range(llbox($lat - .0005, $lon - .0005, $lat + .0005, $lon + .0005));
+				if (@$tiles > 4) {
 					diag sprintf("More than 4 tiles found for range %.6f,%.6f %.6f,%.6f", $lat - .0005, $lon - .0005, $lat + .0005, $lon + .0005);
 					fail( 'Always 4 or less tiles' );
 					die;
 				}
-				if (!grep { $_ == $tile } @tiles) {
+				if (!grep { $_ == $tile } @$tiles) {
 					diag sprintf("Tile range %.6f,%.6f %.6f,%.6f does not include tile %d", $lat - .0005, $lon - .0005, $lat + .0005, $lon + .0005, $tile);
 					fail( 'Always includes tile from center coordinates' );
 					die;

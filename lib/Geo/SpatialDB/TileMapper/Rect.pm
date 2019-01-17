@@ -7,6 +7,11 @@ has lat_divs   => ( is => 'ro', required => 1 );
 has lon_divs   => ( is => 'ro', required => 1 );
 
 sub tiles_in_range {
+	my ($self, $llarea)= @_;
+	return $self->_tiles_in_range(@{ $llarea->as_llbox });
+}
+
+sub _tiles_in_range {
 	my ($self, $lat0, $lon0, $lat1, $lon1)= @_;
 	my ($lat_divs, $lon_divs)= ($self->lat_divs, $self->lon_divs);
 	# clamp latitude
@@ -17,7 +22,7 @@ sub tiles_in_range {
 	$lon_idx0+= $lon_divs*(1+ int(-$lon_idx0/$lon_divs)) if $lon_idx0 < 0;
 	$lon_idx0= $lon_idx0 % $lon_divs;
 	return $lat_idx0 * $lon_divs + $lon_idx0
-		if @_ <= 3;
+		if @_ == 3;
 	# clamp end lat
 	$lat1=  90 if $lat1 >  90;
 	$lat1= -90 if $lat1 < -90;
@@ -37,11 +42,12 @@ sub tiles_in_range {
 			push @ids, $lat * $lon_divs + ($lon % $lon_divs);
 		}
 	}
-	return @ids;
+	return \@ids;
 }
 
 sub tile_at {
-	return shift->tiles_in_range(@_);
+	my ($self, $lat, $lon)= @_;
+	return $self->_tiles_in_range($lat, $lon);
 }
 
 sub tile_polygon {
@@ -57,7 +63,7 @@ sub tile_polygon {
 	my $lon1= ($lon_idx+1)/$lon_divs*360;
 	$lon0 -= 360 if $lon0 >= 180;
 	$lon1 -= 360 if $lon1 >= 180;
-	return ($lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1);
+	return [$lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1];
 }
 
 1;
