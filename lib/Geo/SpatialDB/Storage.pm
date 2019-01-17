@@ -1,5 +1,5 @@
 package Geo::SpatialDB::Storage;
-use Moo 2;
+use Moo::Role 2;
 use Module::Runtime 'require_module';
 use File::Spec::Functions 'catfile';
 use Carp;
@@ -29,9 +29,11 @@ C<'auto'> then the storage should be initialized if it doesn't exist.
 
 has create => ( is => 'ro' );
 
-=head1 METHODS
+=head1 SETUP METHODS
 
 =head2 coerce
+
+  my $storage= Geo::SpatialDB::Storage->coerce( $something );
 
 This is a class method.  It takes "something" and tries to coerce it into a
 storage instance.  It can be a single string (path), a hashref of options,
@@ -45,6 +47,19 @@ included in the hashref only if the hashref didn't already define them)
 This allows you to say C<Geo::SpatialDB::Storage->coerce($path)> and have it
 automatically detect the storage engine and any settings that it was
 previously initialized with.
+
+=head2 save_config
+
+Every storage implementation writes a json file to its directory containing
+the list of arguments to pass back to C<< Geo::SpatialDB::Storage::coerce >>
+to re-create that instance.  Call save_config to update this json file.
+
+=head2 get_ctor_args
+
+  my $hashref= $storage->get_ctor_args;
+
+Get list of arguments for constructor (L</coerce>, actually) which can
+re-create this storage object.
 
 =cut
 
@@ -94,13 +109,95 @@ sub _storage_dir_empty {
 	return !(grep { $_ ne '.' and $_ ne '..' } <$path/*>);
 }
 
-sub _unimplemented { my ($class, $method)= @_; croak "$class has not implemented $method" }
-sub get         { _unimplemented(shift, 'get') }
-sub put         { _unimplemented(shift, 'put') }
-sub commit      { _unimplemented(shift, 'commit') }
-sub rollback    { _unimplemented(shift, 'rollback') }
-sub iterator    { _unimplemented(shift, 'iterator') }
-sub save_config { _unimplemented(shift, 'save_config') }
+sub save_config {
+	my $self= shift;
+	$self->_save_config($self->path, $self->get_ctor_args);
+}
+
+requires 'get_ctor_args';
+
+=head1 METADATA METHODS
+
+=head2 indexes
+
+  # {
+  #   $index_name => { name => $index_name, %flags, ... },
+  #   ...
+  # ]
+
+Returns a hashref of all the available indexes.
+
+=head2 create_index
+
+  $storage->create_index( $index_name, %flags );
+
+Create a named index.  If it exists, this dies.  Flags can be used to optimize the index for
+a particular kind of key or data.
+
+=over 14
+
+=item C<< int_key => 1 >>
+
+All keys are platform-native integers
+
+=item C<< int_value => 1 >>
+
+Values are also integers
+
+=item C<< multivalue => 1 >>
+
+Multiple values can be stored under the same key
+
+=back
+
+=head2 drop_index
+
+  $storage->drop_index( $index_name );
+
+=cut
+
+requires 'indexes';
+requires 'create_index';
+requires 'drop_index';
+
+=head1 DATA METHODS
+
+=head2 get
+
+  my $value= $storage->get( $index_name, $key );
+
+=head2 put
+
+  $storage->put( $index_name, $key, $value );
+
+=head2 commit
+
+  $storage->commit
+
+Commit all changes made to any index since the last open, commit, or rollback.
+Yes, this means that any calls to L</put> will always need to be followed by
+C<commit> before they become part of the stored data.
+
+=head2 rollback
+
+Rollback all changes made to any index since the last open, commit, or rollback.
+
+=head2 iterator
+
+  my $iter= $storage->iterator( $index_name );
+  my $iter= $storage->iterator( $index_name, $start_key );
+  my $iter= $storage->iterator( $index_name, $start_key, $limit_key );
+
+Get an iterator for an index, optionally bounded from one key to another.
+
+=cut
+
+requires 'get';
+requires 'put';
+requires 'commit';
+requires 'rollback';
+requires 'iterator';
+requires 'save_config';
 
 sub _include_attrs_from_config {
 	my $class= shift;

@@ -7,7 +7,7 @@ use File::Path 'make_path';
 use Scalar::Util 'weaken';
 use namespace::clean;
 
-extends 'Geo::SpatialDB::Storage';
+with 'Geo::SpatialDB::Storage';
 
 # ABSTRACT: Key/value storage on LMDB, encoding Perl objects with 'Storable'
 # VERSION
@@ -41,6 +41,11 @@ filesystems.
 
 The maximum size of the database; default is 3GB.  (LMDB needs this parameter)
 
+=head2 maxdbs
+
+The maximum number of named sub-databases (indexes, in this module's terminology).
+The default of 250 should be sufficient for all Geo::SpatialDB activity.
+
 =head2 run_with_scissors
 
 If set to 1, then enable unsafe behavior in order to get some extra speed.
@@ -49,26 +54,41 @@ the operation fails catastrophically.
 
 =cut
 
-has path      => ( is => 'ro', required => 1 );
-has readonly  => ( is => 'ro', default => sub { 0 } );
-has mapsize   => ( is => 'ro', default => sub { 0xC0000000 } );
-has run_with_scissors => ( is => 'ro', default => sub { 0 } );
+BEGIN { # so role sees it exists
+	has path      => ( is => 'ro', required => 1 );
+	has readonly  => ( is => 'ro', default => sub { 0 } );
+	has mapsize   => ( is => 'ro', default => sub { 0xC0000000 } );
+	has maxdbs    => ( is => 'ro', default => sub { 250 } );
+	has run_with_scissors => ( is => 'ro', default => sub { 0 } );
+
+	has indexes   => ( is => 'lazy' );
+}
+
+sub _build_indexes {
+	my $idx_set= shift->get('INFORMATION_SCHEMA', 'indexes');
+	defined $idx_set->{INFORMATION_SCHEMA} or croak "Storage lacks a valid list of indexes";
+	$idx_set;
+}
+
+sub _save_indexes {
+	$_[0]->put('INFORMATION_SCHEMA', 'indexes', $_[0]->indexes);
+}
 
 sub BUILD {
 	my $self= shift;
 	
 	# Immediately try to access the DB so that errors get reported
 	# as soon as user creates the object
-	$self->get(0);
+	$self->indexes;
 }
 
-sub save_config {
+sub get_ctor_args {
 	my $self= shift;
-	$self->_save_config($self->path, {
+	return {
 		CLASS => ref($self),
 		map { $_ => $self->$_ }
 		qw( readonly mapsize run_with_scissors )
-	});
+	}
 }
 
 sub DESTROY {
@@ -81,20 +101,34 @@ has _env => ( is => 'lazy' );
 sub _build__env {
 	my $self= shift;
 	my $path= $self->path;
+	my $initialize;
 	if ($self->_storage_dir_empty($path)) {
 		$self->create or croak "Storage directory '$path' not initialized  (try create => 'auto')";
 		-d $path or make_path($path) or croak "Can't create $path";
-		$self->save_config;
+		$initialize= 1;
 	} elsif (($self->create||0) eq '1') {
 		croak "Storage directory '$path' already exists";
 	}
-	LMDB::Env->new("$path", {
+	my $env= LMDB::Env->new("$path", {
 		mapsize => $self->mapsize,
+		maxdbs  => $self->maxdbs,
 		flags   =>
 			($self->readonly? MDB_RDONLY : 0)
 			| ($self->run_with_scissors? MDB_WRITEMAP|MDB_NOMETASYNC : 0)
 		}
 	);
+	$self->_initialize_lmdb($env) if $initialize;
+	$env;
+}
+
+sub _initialize_lmdb {
+	my ($self, $env)= @_;
+	my $txn= $env->BeginTxn;
+	my $schema= $txn->OpenDB('INFORMATION_SCHEMA');
+	$schema->put('indexes', freeze({ INFORMATION_SCHEMA => { name => 'INFORMATION_SCHEMA' }}));
+	undef $schema;
+	$txn->commit;
+	$self->save_config;
 }
 
 has _txn => ( is => 'lazy', clearer => 1, predicate => 1 );
@@ -103,53 +137,98 @@ sub _build__txn {
 	shift->_env->BeginTxn;
 }
 
-has _db => ( is => 'lazy', clearer => 1 );
-sub _build__db {
-	shift->_txn->OpenDB();
-}
-
+has _dbs => ( is => 'rw', default => sub { +{} } );
 has _cursors => ( is => 'rw', default => sub { +{} } );
 
 my $storable_magic= substr(freeze({}), 0, 1);
 sub die_invalid_assumption {
-	die "Author has made invalid assumptions for your version of Storable and needs to fix his code";
+	die "Geo::SpatialDB author has made invalid assumptions for your version of Storable and needs to fix his code";
 }
 $storable_magic =~ /[\0-\x19]/ or die_invalid_assumption();
+
+=head1 METADATA METHODS
+
+See descriptions in L<Geo::SpatialDB::Storage>
+
+=head2 create_index
+
+=head2 drop_index
+
+=cut
+
+sub create_index {
+	my ($self, $name, %flags)= @_;
+	$flags{name}= $name;
+	my $flags= $self->_index_flags_to_mdb_flags(\%flags) + MDB_CREATE;
+	my $indexes= $self->{indexes}= $self->_build_indexes; # get a fresh copy, for safety
+	defined $self->indexes->{$name} and croak "Index $name already exists";
+	my $db= $self->_txn->OpenDB($name, $flags);
+	$self->_dbs->{$name}= $db;
+	$self->_save_indexes;
+}
+
+sub drop_index {
+	my ($self, $name)= @_;
+	my $indexes= $self->{indexes}= $self->_build_indexes; # get a fresh copy, for safety
+	defined $indexes->{$name} or croak "Index $name does not exist";
+	my $db= delete($self->_dbs->{$name}) // $self->_open_db_with_same_flags($name);
+	$db->drop(1);
+	delete $indexes->{$name};
+	$self->_save_indexes;
+}
+
+sub _index_flags_to_mdb_flags {
+	my ($self, $index_flags)= @_;
+	return ($flags->{int_key}? MDB_INTEGERKEY : 0)
+		+  (!$flags->{multivalue}? 0
+			: MDB_DUPSORT + ($flags{int_value}? MDB_DUPFIXED|MDB_INTEGERDUP : 0)
+		   );
+}
+
+sub _open_db_with_same_flags {
+	my ($self, $name)= @_;
+	my $flags= $self->_index_flags_to_mdb_flags($self->indexes->{$name});
+	$self->_txn->OpenDB($name, $flags);
+}
 
 =head1 METHODS
 
 =head2 get
 
-  my $value= $stor->get( $key );
+  my $value= $stor->get( $index_name, $key );
 
-Get the value of a key, or undef if the key doesn't exist.
+Get the value of a key, or undef if the key doesn't exist.  Dies if the index doesn't exist.
 
 =cut
 
 sub get {
-	my $v= shift->_db->get(shift);
+	my ($self, $dbname, $key)= @_;
+	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
+	my $v= $db->get($key);
 	$v= thaw($v) if defined $v and substr($v, 0, 1) eq $storable_magic;
 	return $v;
 }
 
 =head2 put
 
-  $stor->put( $key, $value );
+  $stor->put( $index_name, $key, $value );
 
 Store a value in the database.  If the key exists it will overwrite the old value.
-If C<$value> is undefined, this deletes the key from the database.
+If C<$value> is undefined, this deletes the key from the database.  If $index_name does
+not exist, it dies.
 
 =cut
 
 sub put {
-	my ($self, $k, $v)= @_;
+	my ($self, $dbname, $k, $v)= @_;
+	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
 	$self->{_written}= 1;
 	if (!defined $v) {
 		local $LMDB_File::die_on_err= 0;
 		my ($ret, $err);
 		{
 			local $@;
-			$ret= $self->_db->del($k);
+			$ret= $db->del($k);
 			$err= $@;
 		}
 		croak $err if $ret && $ret != MDB_NOTFOUND;
@@ -162,7 +241,7 @@ sub put {
 	} else {
 		ord(substr($v, 0, 1)) > 0x1F or croak("scalars must not start with control characters");
 	}
-	$self->_db->put($k, $v);
+	$db->put($k, $v);
 }
 
 =head2 commit, rollback
@@ -180,10 +259,10 @@ see concurrent changes by other processes, you need to call 'commit' or 'rollbac
 sub commit {
 	my $self= shift;
 	if ($self->_has_txn) {
-		$self->_txn->commit;
 		# Need to forcibly clean up all other handles to this txn, due to LMDB_Storable GC bugs
 		%{ $self->_cursors }= ();
-		$self->_clear_db;
+		%{ $self->_dbs }= ();
+		$self->_txn->commit;
 		$self->_clear_txn;
 	}
 	$self->{_written}= 0;
@@ -192,10 +271,10 @@ sub commit {
 sub rollback {
 	my $self= shift;
 	if ($self->_has_txn) {
-		$self->_txn->abort;
 		# Need to forcibly clean up all other handles to this txn, due to LMDB_Storable GC bugs
 		%{ $self->_cursors }= ();
-		$self->_clear_db;
+		%{ $self->_dbs }= ();
+		$self->_txn->abort;
 		$self->_clear_txn;
 	}
 	$self->{_written}= 0;
@@ -218,9 +297,10 @@ greater to it.
 =cut
 
 sub iterator {
-	my ($self, $key)= @_;
+	my ($self, $dbname, $key)= @_;
+	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
 	my $op= defined $key? MDB_SET_RANGE : MDB_FIRST;
-	my $cursor= $self->_db->Cursor;
+	my $cursor= $db->Cursor;
 	$self->_cursors->{$cursor}= $cursor; # this is the official reference
 	weaken($cursor); # hold onto a weak ref so we know when it's gone
 	my $data;
