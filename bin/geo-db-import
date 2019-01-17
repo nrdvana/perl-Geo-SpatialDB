@@ -1,0 +1,60 @@
+#! /usr/bin/env perl
+use strict;
+use warnings;
+use FindBin;
+use File::Spec::Functions 'catdir';
+use lib catdir($FindBin::Bin, '..', 'lib');
+use Log::Any '$log';
+use Log::Progress;
+use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 1 };
+
+use Geo::SpatialDB;
+use Geo::SpatialDB::Import::OpenStreetMap;
+use Getopt::Long;
+GetOptions(
+	'help'        => sub { pod2usage(1) },
+	'create'      => \(my $create),
+	'db=s'        => \(my $db),
+	'tmp-db=s'    => \(my $tmp_db),
+	'preprocess!' => \(my $preprocess= 1),
+	'import=s'    => \(my $import='road'),
+	'version|V'   => sub { printf "Geo::SpatialDB Version %s\n", Geo::SpatialDB->VERSION; exit 1; },
+	'verbose|quiet|v|q' => sub {}, # handled by log adapter
+) or pod2usage(2);
+
+my $geodb;
+# only create if importing step requested, but create before doing a bunch of work
+if ($import) {
+	defined $db && -f "$db/config.json" || $create || -f "./config.json"
+		or pod2usage(-message => 'Must specify --db or run from a database directory, or specify --create to create a database in the current directory.');
+	$geodb= Geo::SpatialDB->new(
+		storage => { path => (defined $db? $db : '.'), create => ($create? 'auto' : undef) },
+	);
+}
+
+my $importer= Geo::SpatialDB::Import::OpenStreetMap->new(
+	tmp_storage => $tmp_db,
+	progress    => Log::Progress->new,
+);
+
+for (@ARGV) {
+	-f $_ or pod2usage(-message => "'$_' is not a file");
+	$log->info("Loading $_");
+	$importer->load_xml($_);
+}
+
+$importer->preprocess if $preprocess;
+
+for (split /,/, $import) {
+	if ($_ eq 'road') {
+		$importer->generate_roads($geodb);
+	}
+	$geodb->storage->commit;
+}
+
+my $stats= $importer->stats;
+printf "Loaded %d roads with %d segments totaling %d verticies, with %d nodes\n",
+	$stats->{gen_road}, $stats->{gen_road_seg}, $stats->{gen_road_seg_pts}, $stats->{gen_road_loc};
+printf "By type:\n";
+printf "   %10d  %s\n", $stats->{types}{$_}, $_
+	for keys %{ $stats->{types} // {} };
