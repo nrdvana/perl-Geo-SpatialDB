@@ -1,6 +1,8 @@
 package Geo::SpatialDB::TileMapper::Rect;
 use Moo 2;
 
+# VERSION
+
 has lat_divs   => ( is => 'ro', required => 1 );
 has lon_divs   => ( is => 'ro', required => 1 );
 

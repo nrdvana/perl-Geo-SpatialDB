@@ -1,5 +1,4 @@
 package Geo::SpatialDB::Export::MapPolygon3D;
-
 use Moo 2;
 use Carp;
 use Try::Tiny;
@@ -10,6 +9,7 @@ use Geo::SpatialDB::Math qw( vector vector_latlon polygon earth_radius );
 use namespace::clean;
 
 # ABSTRACT: Export map data as polygons in 3D
+# VERSION
 
 =head1 DESCRIPTION
 

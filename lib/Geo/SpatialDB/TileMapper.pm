@@ -1,6 +1,8 @@
 package Geo::SpatialDB::TileMapper;
 use Moo::Role;
 
+# VERSION
+
 =head1 DESCRIPTION
 
 This role defines the API for TileMappers, which divide the globe into

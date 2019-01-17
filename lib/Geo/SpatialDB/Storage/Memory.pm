@@ -1,5 +1,4 @@
 package Geo::SpatialDB::Storage::Memory;
-
 use Moo 2;
 use Storable 'freeze', 'thaw';
 use Carp;
@@ -8,6 +7,7 @@ use namespace::clean;
 extends 'Geo::SpatialDB::Storage';
 
 # ABSTRACT: Key/value storage in memory, for small datasets or testing
+# VERSION
 
 =head1 DESCRIPTION
 

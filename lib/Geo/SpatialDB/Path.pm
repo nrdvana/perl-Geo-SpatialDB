@@ -1,9 +1,9 @@
 package Geo::SpatialDB::Path;
-
 use Moo 2;
 use namespace::clean;
 
 # ABSTRACT: A connected sequence of points on the map
+# VERSION
 
 =head1 ATTRIBUTES
 

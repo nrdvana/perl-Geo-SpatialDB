@@ -11,6 +11,8 @@ our @EXPORT_OK= qw( earth_radius latlon_distance latlon_rad_to_dlat_dlon latlon_
 	vector vector_latlon polygon llrad llbox );
 our %EXPORT_TAGS= ( 'all' => \@EXPORT_OK );
 
+# VERSION
+
 use constant earth_radius => 6_371_640;
 
 our $gd;

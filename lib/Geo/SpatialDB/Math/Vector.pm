@@ -6,6 +6,8 @@ use Exporter 'import';
 use Math::Trig qw( spherical_to_cartesian pi );
 our @EXPORT_OK= qw( vector vector_latlon );
 
+# VERSION
+
 =head1 SYNOPSIS
 
   my ($x,$y,$z)= vector(1,2,3)->cross(vector(3,2,1))->normalize->xyz;

@@ -4,6 +4,8 @@ use warnings;
 use Exporter 'import';
 our @EXPORT_OK= qw( polygon );
 
+# VERSION
+
 sub new {
 	my $class= shift;
 	bless [ @_ ], ref($class)||$class;

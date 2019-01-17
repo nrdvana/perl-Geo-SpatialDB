@@ -4,6 +4,7 @@ use warnings;
 use Geo::SpatialDB::Math 'latlon_rad_to_dlat_dlon', 'latlon_rad_to_range';
 
 # ABSTRACT: Describes an area by latitude, longitude, and radius
+# VERSION
 
 =head1 DESCRIPTION
 

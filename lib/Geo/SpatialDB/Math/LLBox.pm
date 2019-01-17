@@ -4,6 +4,7 @@ use warnings;
 use Geo::SpatialDB::Math 'latlon_distance';
 
 # ABSTRACT: Describes a min/max latitude and longitude box
+# VERSION
 
 =head1 DESCRIPTION
 

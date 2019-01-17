@@ -1,5 +1,4 @@
 package Geo::SpatialDB;
-
 use Moo 2;
 use Log::Any '$log';
 use Carp;
@@ -9,6 +8,7 @@ use Geo::SpatialDB::Storage;
 use namespace::clean;
 
 # ABSTRACT: Generic reverse-geocoding engine on top of key/value storage
+# VERSION
 
 =head1 DESCRIPTION
 

@@ -1,5 +1,4 @@
 package Geo::SpatialDB::Storage;
-
 use Moo 2;
 use Module::Runtime 'require_module';
 use File::Spec::Functions 'catfile';
@@ -8,6 +7,7 @@ use JSON::MaybeXS;
 use namespace::clean;
 
 # ABSTRACT: Base class for key/value storage appropriate for Geo::SpatialDB
+# VERSION
 
 =head1 DESCRIPTION
 

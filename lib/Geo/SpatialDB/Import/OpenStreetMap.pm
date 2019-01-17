@@ -1,5 +1,4 @@
 package Geo::SpatialDB::Import::OpenStreetMap;
-
 use Moo 2;
 use Carp;
 use XML::Parser;
@@ -13,6 +12,7 @@ use Geo::SpatialDB::Entity::RouteSegment;
 use namespace::clean;
 
 # ABSTRACT: Import OpenStreetMap data as SpatialDB Entities
+# VERSION
 
 =head1 DESCRIPTION
 
