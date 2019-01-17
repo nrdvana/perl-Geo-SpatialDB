@@ -8,8 +8,70 @@ use Log::Any '$log';
 use Log::Progress;
 use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 1 };
 
+# ABSTRACT: Load source data files and import entities into a Geo::SpatialDB
+
+=head1 SYNOPSIS
+
+  geo-db-import --db=PATH [--create] SOURCE1 [SOURCE2 ...]
+  geo-db-import --import= --no-preprocess --tmp-db=TMP_PATH SOURCE1 [SOURCE2 ...]
+  geo-db-import --tmp-db=TMP_PATH --db=DB_PATH --import=road
+
+=head1 OPTIONS
+
+=over 16
+
+=item --db=PATH
+
+Path to the storage for the Geo::SpatialDB.
+
+=item --create
+
+Create the storage DB if it doesn't exist.
+
+=item --tmp-db=PATH
+
+Path for a temporary database used to index data from the XML files.  Defaults to a temporary
+directory that gets cleaned up before exit.  If you specify a path it won't get deleted.
+
+=item --no-preprocess
+
+Use this to skip the preprocessing step.  (preprocessing is required for importing, but not
+loading data into the tmp db)
+
+=item --import=LIST
+
+Import these things from the temporary DB into the main DB.  Options are separated with comma:
+
+=over
+
+=item road
+
+=back
+
+=item --verbose / -v
+
+More logging
+
+=item --quiet / -q
+
+Less logging
+
+=item --version
+
+Print version
+
+=item --help
+
+Print this help
+
+=back
+
+=cut
+
 use Geo::SpatialDB;
 use Geo::SpatialDB::Import::OpenStreetMap;
+
+sub pod2usage { require Pod::Usage; Pod::Usage::pod2usage(@_) }
 use Getopt::Long;
 GetOptions(
 	'help'        => sub { pod2usage(1) },
@@ -26,7 +88,7 @@ my $geodb;
 # only create if importing step requested, but create before doing a bunch of work
 if ($import) {
 	defined $db && -f "$db/config.json" || $create || -f "./config.json"
-		or pod2usage(-message => 'Must specify --db or run from a database directory, or specify --create to create a database in the current directory.');
+		or pod2usage(-message => 'Must specify --db or run from a database directory. Specify --create if it doesn\'t exist yet.');
 	$geodb= Geo::SpatialDB->new(
 		storage => { path => (defined $db? $db : '.'), create => ($create? 'auto' : undef) },
 	);
@@ -58,3 +120,5 @@ printf "Loaded %d roads with %d segments totaling %d verticies, with %d nodes\n"
 printf "By type:\n";
 printf "   %10d  %s\n", $stats->{types}{$_}, $_
 	for keys %{ $stats->{types} // {} };
+
+# PODNAME: geo-db-import
