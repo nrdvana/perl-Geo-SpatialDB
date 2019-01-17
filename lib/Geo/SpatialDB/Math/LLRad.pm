@@ -1,7 +1,7 @@
 package Geo::SpatialDB::Math::LLRad;
 use strict;
 use warnings;
-use Geo::SpatialDB::Math 'latlon_rad_to_dlat_dlon', 'latlon_rad_to_range';
+use Geo::SpatialDB::Math;
 
 # ABSTRACT: Describes an area by latitude, longitude, and radius
 # VERSION
@@ -26,8 +26,8 @@ sub lat :lvalue { $_[0][0] }
 sub lon :lvalue { $_[0][1] }
 sub radius :lvalue { $_[0][2] }
 
-sub dLat { (latlon_rad_to_dlat(@{$_[0]}))[0] }
-sub dLon { (latlon_rad_to_dlat(@{$_[0]}))[1] }
+sub dLat { (Geo::SpatialDB::Math::latlon_rad_to_dlat(@{$_[0]}))[0] }
+sub dLon { (Geo::SpatialDB::Math::latlon_rad_to_dlat(@{$_[0]}))[1] }
 sub lat0 { $_[0][0] - $_[0]->dLat }
 sub lon0 { $_[0][1] - $_[0]->dLon }
 sub lat1 { $_[0][0] + $_[0]->dLat }
@@ -37,7 +37,7 @@ sub clone {
 	my $self= shift;
 	bless [ @$self ], ref $self;
 }
-sub clone_as_llbox { Geo::SpatialDB::Math::LLBox->new(latlon_rad_to_range(@{$_[0]})) }
+sub clone_as_llbox { Geo::SpatialDB::Math::LLBox->new(Geo::SpatialDB::Math::latlon_rad_to_range(@{$_[0]})) }
 sub clone_as_llrad { shift->clone; }
 sub as_llbox { shift->clone_as_llbox }
 sub as_llrad { $_[0] }

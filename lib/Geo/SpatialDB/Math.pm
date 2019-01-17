@@ -6,6 +6,8 @@ use Math::Trig 'pi', 'pip2', 'spherical_to_cartesian';
 use GIS::Distance;
 use Geo::SpatialDB::Math::Vector qw( vector vector_latlon );
 use Geo::SpatialDB::Math::Polygon qw( polygon );
+use Geo::SpatialDB::Math::LLRad;
+use Geo::SpatialDB::Math::LLBox;
 our @EXPORT_OK= qw( earth_radius latlon_distance latlon_rad_to_dlat_dlon latlon_rad_to_range
 	latlon_to_xyz latlon_to_earth_xyz
 	vector vector_latlon polygon llrad llbox );
