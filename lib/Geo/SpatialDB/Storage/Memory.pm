@@ -4,7 +4,7 @@ use Storable 'freeze', 'thaw';
 use Carp;
 use namespace::clean;
 
-extends 'Geo::SpatialDB::Storage';
+with 'Geo::SpatialDB::Storage';
 
 # ABSTRACT: Key/value storage in memory, for small datasets or testing
 # VERSION
@@ -16,28 +16,50 @@ order to get a deep clone of the data and isolate from unintended writes to shar
 
 =cut
 
-has data => ( is => 'rw', default => sub { +{} } );
-has _txn => ( is => 'rw', default => sub { +{} } );
+sub get_ctor_args { return { indexes => $_[0]->indexes, data => $_[0]->data } }
+
+BEGIN {
+	has indexes => ( is => 'rw', default => sub { +{} } );
+	has data => ( is => 'rw', default => sub { +{} } );
+	has _txn => ( is => 'rw', default => sub { +{} } );
+}
 
 =head1 METHODS
 
+=cut
+
+sub create_index {
+	my ($self, $name)= @_;
+	$self->indexes->{$name} and croak "Index $name already exists";
+	$self->indexes->{$name}= { name => $name };
+	$self->_txn->{$name}= {};
+}
+
+sub drop_index {
+	my ($self, $name)= @_;
+	$self->indexes->{$name} or croak "No such index $name";
+	delete $self->indexes->{$name};
+	$self->_txn->{$name}= undef;
+}
+
 =head2 get
 
-  my $value= $stor->get( $key );
+  my $value= $stor->get( $index_name, $key );
 
 Get the value of a key, or undef if the key doesn't exist.
 
 =cut
 
 sub get {
-	my ($self, $k)= @_;
-	my $v= exists $self->_txn->{$k}? $self->_txn->{$k} : $self->data->{$k};
-	return defined $v? thaw($v) : undef;
+	my ($self, $index_name, $k)= @_;
+	my $v= exists $self->_txn->{$index_name}{$k}? $self->_txn->{$index_name}{$k}
+		: $self->data->{$index_name}{$k};
+	return ref $v? thaw($$v) : $v;
 }
 
 =head2 put
 
-  $stor->put( $key, $value );
+  $stor->put( $index_name, $key, $value );
 
 Store a value in the database.  If the key exists it will overwrite the old value.
 If C<$value> is undefined, this deletes the key from the database.
@@ -45,8 +67,8 @@ If C<$value> is undefined, this deletes the key from the database.
 =cut
 
 sub put {
-	my ($self, $k, $v)= @_;
-	$self->_txn->{$k}= defined $v? freeze($v) : undef;
+	my ($self, $index_name, $k, $v)= @_;
+	$self->_txn->{$index_name}{$k}= ref $v? \freeze($v) : $v;
 }
 
 =head2 commit, rollback
@@ -63,15 +85,22 @@ see concurrent changes by other processes, you need to call 'commit' or 'rollbac
 
 sub commit {
 	my $self= shift;
-	for my $k (keys %{$self->_txn}) {
-		my $v= $self->_txn->{$k};
-		if (defined $v) {
-			$self->data->{$k}= $v;
+	for my $index_name (keys %{$self->_txn}) {
+		my $index= $self->_txn->{$index_name};
+		if (!defined $index) {
+			delete $self->data->{$index_name};
 		} else {
-			delete $self->data->{$k};
+			for my $k (keys %$index) {
+				my $v= $index->{$k};
+				if (defined $v) {
+					$self->data->{$index_name}{$k}= $v;
+				} else {
+					delete $self->data->{$index_name}{$k};
+				}
+			}
 		}
-		%{$self->_txn}= ();
 	}
+	%{$self->_txn}= ();
 }
 
 sub rollback {
@@ -81,9 +110,9 @@ sub rollback {
 
 =head2 iterator
 
-  my $i= $stor->iterator;
+  my $i= $stor->iterator( $index_name );
   # or
-  my $i= $stor->iterator( $from_key );
+  my $i= $stor->iterator( $index_name, $from_key );
   # then...
   while (my $k= $i->()) { ... }
   # or
@@ -96,21 +125,24 @@ greater to it.
 =cut
 
 sub iterator {
-	my ($self, $from_key)= @_;
+	my ($self, $index_name, $from_key)= @_;
 	$from_key= '' unless defined $from_key;
 	my %snapshot;
-	my $txn= $self->_txn;
-	for (keys %$txn) {
+	my $txn= $self->_txn->{$index_name};
+	my $data= $self->data->{$index_name};
+	for ($txn? keys %$txn : ()) {
 		$snapshot{$_}= $txn->{$_} if defined $txn->{$_} and $_ ge $from_key;
 	}
-	for (keys %{$self->data}) {
-		$snapshot{$_}= $self->data->{$_} if !exists $txn->{$_} and $_ ge $from_key;
+	for ($data? keys %$data : ()) {
+		$snapshot{$_}= $data->{$_} if !exists $txn->{$_} and $_ ge $from_key;
 	}
 	my @keys= sort keys %snapshot;
 	return sub {
 		my $k= shift @keys;
 		return $k unless wantarray;
-		return ($k, thaw($snapshot{$k}));
+		return unless defined $k;
+		my $v= $snapshot{$k};
+		return ($k, ref $v? thaw($$v) : $v);
 	}
 }
 

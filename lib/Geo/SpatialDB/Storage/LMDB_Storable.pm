@@ -65,7 +65,10 @@ BEGIN { # so role sees it exists
 }
 
 sub _build_indexes {
-	my $idx_set= shift->get('INFORMATION_SCHEMA', 'indexes');
+	my $self= shift;
+	# Prevent an infinite loop by making sure the DB object for INFORMATION_SCHEMA is created.
+	$self->{_dbs}{INFORMATION_SCHEMA} //= $self->_txn->OpenDB('INFORMATION_SCHEMA');
+	my $idx_set= $self->get('INFORMATION_SCHEMA', 'indexes');
 	defined $idx_set->{INFORMATION_SCHEMA} or croak "Storage lacks a valid list of indexes";
 	$idx_set;
 }
@@ -124,7 +127,7 @@ sub _build__env {
 sub _initialize_lmdb {
 	my ($self, $env)= @_;
 	my $txn= $env->BeginTxn;
-	my $schema= $txn->OpenDB('INFORMATION_SCHEMA');
+	my $schema= $txn->OpenDB('INFORMATION_SCHEMA', MDB_CREATE);
 	$schema->put('indexes', freeze({ INFORMATION_SCHEMA => { name => 'INFORMATION_SCHEMA' }}));
 	undef $schema;
 	$txn->commit;
@@ -171,23 +174,24 @@ sub drop_index {
 	my ($self, $name)= @_;
 	my $indexes= $self->{indexes}= $self->_build_indexes; # get a fresh copy, for safety
 	defined $indexes->{$name} or croak "Index $name does not exist";
-	my $db= delete($self->_dbs->{$name}) // $self->_open_db_with_same_flags($name);
+	my $db= delete($self->_dbs->{$name}) // $self->_open_db_with_same_flags($indexes->{$name});
 	$db->drop(1);
 	delete $indexes->{$name};
 	$self->_save_indexes;
 }
 
 sub _index_flags_to_mdb_flags {
-	my ($self, $index_flags)= @_;
+	my ($self, $flags)= @_;
 	return ($flags->{int_key}? MDB_INTEGERKEY : 0)
 		+  (!$flags->{multivalue}? 0
-			: MDB_DUPSORT + ($flags{int_value}? MDB_DUPFIXED|MDB_INTEGERDUP : 0)
+			: MDB_DUPSORT + ($flags->{int_value}? MDB_DUPFIXED|MDB_INTEGERDUP : 0)
 		   );
 }
 
 sub _open_db_with_same_flags {
 	my ($self, $name)= @_;
-	my $flags= $self->_index_flags_to_mdb_flags($self->indexes->{$name});
+	my $info= ref $name eq 'HASH'? $name : $self->indexes->{$name}; 
+	my $flags= $self->_index_flags_to_mdb_flags($info);
 	$self->_txn->OpenDB($name, $flags);
 }
 
