@@ -13,8 +13,8 @@ A unique ID for this path.
 
 =head2 seq
 
-The sequence of C<< [$lat,$lon] >> coordinates that makes up the path.  This is an arrayref
-of arrayrefs.
+The sequence of C<< ($lat,$lon) >> coordinates that makes up the path.
+This is a single arrayref of pairs of values.
 
 =cut
 

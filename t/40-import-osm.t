@@ -19,18 +19,20 @@ my $importer= Geo::SpatialDB::Import::OpenStreetMap->new(
 package Test::Mock::SpatialDB {
 	use Moo 2;
 	use Log::Any '$log';
+	use Geo::SpatialDB::Storage::Memory;
 	
-	has entities       => is => 'rw';
+	has storage        => is => 'rw', default => sub { Geo::SpatialDB::Storage::Memory->new() };
 	has location_count => is => 'rw', default => sub { 0 };
 	has route_count    => is => 'rw', default => sub { 0 };
-	has area_count     => is => 'rw', default => sub { 0 };
+	has segment_count  => is => 'rw', default => sub { 0 };
 	
 	sub add_entity {
 		my ($self, $entity)= @_;
 		$log->debugf("%s", $entity);
 		$self->{location_count}++ if $entity->isa('Geo::SpatialDB::Entity::Location');
-		$self->{route_count}++    if $entity->isa('Geo::SpatialDB::Entity::RouteSegment');
-		push @{ $self->{entities} }, $entity;
+		$self->{segment_count}++  if $entity->isa('Geo::SpatialDB::Entity::RouteSegment');
+		$self->{route_count}++    if $entity->isa('Geo::SpatialDB::Entity::Route');
+		$self->storage->put(entity => $entity->id, $entity);
 	}
 };
 
@@ -43,7 +45,8 @@ $importer->tmp_storage->commit;
 my $sdb= Test::Mock::SpatialDB->new;
 $importer->generate_roads($sdb);
 
-is( $sdb->location_count, 358, 'locations' );
-is( $sdb->route_count,    237, 'routes' );
+is( $sdb->location_count, 448, 'locations' );
+is( $sdb->segment_count,  553, 'route segments' );
+is( $sdb->route_count,    238, 'routes' );
 
 done_testing;

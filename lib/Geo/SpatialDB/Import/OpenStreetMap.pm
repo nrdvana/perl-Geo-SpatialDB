@@ -6,6 +6,7 @@ use File::Temp;
 use JSON;
 use Log::Any '$log';
 use Geo::SpatialDB::Storage;
+use Geo::SpatialDB::Path;
 use Geo::SpatialDB::Entity::Location;
 use Geo::SpatialDB::Entity::Route;
 use Geo::SpatialDB::Entity::RouteSegment;
@@ -69,8 +70,8 @@ be undesirable.  You should also use the fastest available storage engine.
 
 =head2 entity_id_prefix
 
-The IDs from the input willb e used directly, but if this causes a problem for
-your application you cna prefix them all with a string of your choosing.
+The IDs from the input will be used directly, but if this causes a problem for
+your application you can prefix them all with a string of your choosing.
 
 =head2 stats
 
@@ -87,7 +88,7 @@ has stats            => ( is => 'lazy' );
 
 sub _build_stats {
 	my $self= shift;
-	$self->tmp_storage->get('stats') || {};
+	$self->tmp_storage->get(state => 'stats') || {};
 }
 
 sub _build_tmp_storage {
@@ -102,7 +103,9 @@ sub _build_tmp_storage {
 		unless defined $cfg{path};
 	$cfg{run_with_scissors}= 1;
 	$cfg{create}= 'auto';
-	Geo::SpatialDB::Storage::coerce(\%cfg);
+	my $storage= Geo::SpatialDB::Storage::coerce(\%cfg);
+	$storage->indexes->{state} or $storage->create_index('state');
+	$storage;
 }
 
 sub DESTROY {
@@ -150,6 +153,8 @@ sub load_xml {
 	my @stack;
 	my $stats= $self->stats;
 	my $stor= $self->tmp_storage;
+	$stor->indexes->{$_} or $stor->create_index($_, int_key => 1)
+		for qw( node way relation );
 	XML::Parser->new( Handlers => {
 		Start => sub {
 			my ($expat, $el, %attr) = @_;
@@ -173,31 +178,37 @@ sub load_xml {
 			elsif ($el eq 'node') {
 				$stats->{node}++;
 				$stats->{node_tag}{$_}++ for keys %{ $obj->{tag} // {} };
-				$stor->put('n'.$obj->{id}, [ $obj->{lat}, $obj->{lon}, [], $obj->{tag} ]);
+				$stor->put('node', 0+$obj->{id}, {
+					lat => $obj->{lat},
+					lon => $obj->{lon},
+					tag => $obj->{tag},
+					way => [],
+					rel => [],
+				});
 			}
 			elsif ($el eq 'way') {
 				$stats->{way}++;
 				$stats->{way_tag}{$_}++ for keys %{ $obj->{tag} // {} };
-				$stor->put('w'.$obj->{id}, $obj);
+				$stor->put('way', 0+$obj->{id}, $obj);
 			}
 			elsif ($el eq 'relation') {
 				$stats->{relation}++;
 				$stats->{relation_tag}{$_}++ for keys %{ $obj->{tag} // {} };
 				$stats->{relation_member_type}{$_}++ for map { $_->{type} // '' } @{ $obj->{member} // []};
 				$stats->{relation_member_role}{$_}++ for map { $_->{role} // '' } @{ $obj->{member} // []};
-				$stor->put('r'.$obj->{id}, $obj);
+				$stor->put('relation', 0+$obj->{id}, $obj);
 			}
 		}
 	})->parse($self->_open_stream($source));
-	$stor->put(stats => $stats);
-	$stor->put(preprocessed => 0);
+	$stor->put('state', stats => $stats);
+	$stor->put('state', preprocessed => 0);
 	$stor->commit;
 	$self;
 }
 
 =head2 preprocess
 
-After loading XML data, the entities need cross-referenced.  call this method
+After loading XML data, the entities need cross-referenced.  Call this method
 to perform that step.  If L</progress> is set, this routine will log the
 progress as it runs with a sub-task ID of C<"preprocess">.
 
@@ -214,24 +225,24 @@ sub preprocess {
 	my $self= shift;
 	my $stor= $self->tmp_storage;
 	my $stats= $self->stats;
-	return if $stor->get('preprocessed');
+	return if $stor->get('state', 'preprocessed');
 	
 	my ($way_id, $rel_id, $way, $rel);
 	my ($progress_i, $progress_n, $progress_prev, $progress_ival)= (0, $stats->{way}+$stats->{relation}, -1, 0.05);
 	
 	# Relate nodes to ways that reference them
-	my $i= $stor->iterator('w');
-	while ((($way_id,$way)= $i->()) and $way_id =~ /^w/) {
+	my $i= $stor->iterator('way');
+	while ((($way_id,$way)= $i->())) {
 		if ($progress_i++ / $progress_n >= $progress_prev + $progress_ival) {
 			$log->info("progress: $progress_i/$progress_n");
 			$progress_prev= ($progress_i-1) / $progress_n;
 		}
 		$stats->{preproc_way}++;
 		for my $node_id (@{ $way->{nd} // [] }) {
-			my $n= $stor->get("n$node_id");
+			my $n= $stor->get(node => $node_id);
 			if ($n) {
-				push @{ $n->[2] }, $way_id;
-				$stor->put("n$node_id", $n);
+				push @{ $n->{way} }, $way_id;
+				$stor->put(node => $node_id, $n);
 				$stats->{preproc_rewrite_node}++;
 			} else {
 				$log->notice("Way $way_id references missing node $node_id");
@@ -239,8 +250,8 @@ sub preprocess {
 		}
 	}
 	# Relate nodes and ways to relations that reference them
-	$i= $stor->iterator('r');
-	while ((($rel_id,$rel)= $i->()) and $rel_id =~ /^r/) {
+	$i= $stor->iterator('relation');
+	while ((($rel_id,$rel)= $i->())) {
 		if ($progress_i++ / $progress_n >= $progress_prev + $progress_ival) {
 			$log->info("progress: $progress_i/$progress_n");
 			$progress_prev= ($progress_i-1) / $progress_n;
@@ -251,20 +262,20 @@ sub preprocess {
 			# If relation mentions a way or node, load it and add the reference
 			# and store it back.
 			if ($typ eq 'node' && $m->{ref}) {
-				my $n= $stor->get("n$m->{ref}");
+				my $n= $stor->get(node => $m->{ref});
 				if ($n) {
-					push @{ $n->[2] }, $rel_id;
-					$stor->put("n$m->{ref}");
+					push @{ $n->{rel} }, $rel_id;
+					$stor->put(node => $m->{ref});
 					$stats->{preproc_rewrite_node}++;
 				} else {
 					$log->notice("Relation $rel_id references missing node $m->{ref}");
 				}
 			}
 			elsif ($typ eq 'way' && $m->{ref}) {
-				my $way= $stor->get("w$m->{ref}");
+				my $way= $stor->get(way => $m->{ref});
 				if ($way) {
 					push @{ $way->{rel} }, $rel_id;
-					$stor->put("w$m->{ref}", $way);
+					$stor->put(way => $m->{ref}, $way);
 					$stats->{preproc_rewrite_way}++;
 				}
 				else {
@@ -273,8 +284,8 @@ sub preprocess {
 			}
 		}
 	}
-	$stor->put(stats => $stats);
-	$stor->put(preprocessed => 1);
+	$stor->put(state => stats => $stats);
+	$stor->put(state => preprocessed => 1);
 	$stor->commit;
 }
 
@@ -406,16 +417,15 @@ iterating the OpenStreetMap data.
 
 =cut
 
+sub latlon_key { pack('ll', int($_[0]*1_000_000), int($_[1]*1_000_000)) }
 sub generate_roads {
 	my ($self, $geodb, %opts)= @_;
 	$self->preprocess;
-	my $stor= $self->tmp_storage;
+	my $tmp= $self->tmp_storage;
+	my $dest= $geodb->storage;
 	my $stats= $self->stats;
-	my $prefix= $self->entity_id_prefix;
-	$prefix = '' unless defined $prefix;
 	my $progress= $opts{progress};
-	my $tmp_prefix= "~";
-
+	
 	my $highway_type= $opts{type} || {
 		map { $_ => "rt.$_" } qw(
 			motorway motorway_link rest_area
@@ -426,12 +436,29 @@ sub generate_roads {
 			service residential living_street
 			road unclassified track )
 	};
+	
+	# On first pass, mark all route segments and intersections.  Intersections are keyed by
+	# node ID.  Route segments get an auto-inc key.
+	my $next_seg_id= 1;
+	$tmp->create_index('relation_routes', int_key => 1, int_value => 1);
+	$tmp->create_index('intersection', int_key => 1, int_value => 1);
+	$tmp->create_index('route', int_key => 1);
 
+	$dest->indexes->{entity} or $dest->create_index('entity');
+	$dest->indexes->{path} or $dest->create_index('path');
+	my $next_ent_id= $dest->indexes->{entity}{next_id} // 1;
+	my $next_path_id= $dest->indexes->{path}{next_id} // 1;
+
+	# TODO: iterate all entities and paths that already exist in the GeoDB,
+	# and de-duplicate vs the ones we are about to create.
+	#$tmp->create_index('location_by_latlon', int_value => 1);
+	#$tmp->
+	
 	$progress->at(0, $stats->{way}) if $progress;
 
 	# Iterate every 'way' looking for ones with a 'highway' tag
-	my ($iter, $way_id, $way)= $stor->iterator('w');
-	while ((($way_id, $way)= $iter->()) and $way_id =~ /^w/) {
+	my ($iter, $way_id, $way)= $tmp->iterator('way');
+	while ((($way_id, $way)= $iter->())) {
 		next unless defined $way->{tag}{highway};
 		my $type= $highway_type->{ $way->{tag}{highway} };
 		next unless defined $type;
@@ -440,64 +467,69 @@ sub generate_roads {
 		# Delete all "tiger:" tags, for now.  (they're not very useful for my purposes)
 		delete $way->{tag}{$_} for grep { /^tiger:/ } keys %{ $way->{tag} };
 
-		my $seg_idx= 0;
-		my $seg_id= sprintf("%sw%X.%X", $prefix, substr($way_id,1), $seg_idx++);
-		my @path;
-		for my $node_id (@{$way->{nd}}) {
-			my $node= $stor->get("n$node_id");
+		# Walk the nodes of the way, creating route segments any time there are more than
+		# one way referencing a node.  (this might create more segments than needed, but
+		# would be expensive to look up each intersecting 
+		my (@segments, @seq);
+		my $start= 0;
+		my $prev_endpoint;
+		my $path= Geo::SpatialDB::Path->new( id => $next_path_id++, seq => \@seq );
+		for my $i (0 .. $#{$way->{nd}}) {
+			my $node_id= $way->{nd}[$i];
+			my $node= $tmp->get(node => $node_id);
 			if (!$node) {
 				$log->error("Way $way_id references missing node $node_id");
 				next;
 			}
-			# Is the node referenced by other ways? If so, we create it as a "location".
-			# If not, then we just grab its lat/lon and ignore the rest.
-			# TODO: we should generate an Intersection Location and start a new
-			# RouteSegment each time more than one Way with tag of Highway
-			# shares the same node.
-			my %ref= map { $_ => 1 } @{ $node->[2] };
-			if (1 < keys %ref) {
-				my $loc_id= sprintf("%sn%X", $prefix, $node_id);
-				my $loc= $stor->get("$tmp_prefix$loc_id");
-				if (!$loc) {
-					$loc= Geo::SpatialDB::Entity::Location->new(
-						id   => $loc_id,
-						type => 'todo',
-						lat  => $node->[0],
-						lon  => $node->[1],
+			# If the node is referenced by more than just this Way, or if it is the final
+			# point on the way, record a new intersection and RouteSegment.
+			if (@{ $node->{way} } > 1 or $i == 0 or $i == $#{$way->{nd}}) {
+				# Create an intersection
+				my $loc_ent_id= $tmp->get(intersection => $node_id);
+				if (!$loc_ent_id) {
+					my $loc= Geo::SpatialDB::Entity::Location->new(
+						id   => ($loc_ent_id= $next_ent_id++),
+						type => 'intersection',
+						lat  => $node->{lat},
+						lon  => $node->{lon},
 						rad  => 0,
-						tags => $node->[3],
+						tags => $node->{tag},
 					);
+					$geodb->add_entity($loc);
+					$tmp->put(intersection => $node_id, $loc->id);
 					$stats->{gen_road_loc}++;
 				}
-				$loc->rel([ @{ $loc->rel // [] }, $seg_id ]);
-				$stor->put("$tmp_prefix$loc_id", $loc);
-				push @path, [ $node->[0], $node->[1], $loc_id ];
+				# Create a RouteSegment if we have accumulated any distance along the way
+				if ($i > $start and $prev_endpoint) {
+					my $seg= Geo::SpatialDB::Entity::RouteSegment->new(
+						id       => $next_ent_id++,
+						path_ids => [ [ $path->id, $start, $i ] ],
+						type     => $type,
+						($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes'? (twoway => 0) : (twoway => 1)),
+						# lanes
+						# speed
+						# restrictions
+						routes   => [],
+						endpoint0 => $prev_endpoint,
+						endpoint1 => $loc_ent_id,
+					);
+					push @segments, $seg;
+					$start= $i;
+				}
+				$prev_endpoint= $loc_ent_id;
 			}
-			else {
-				push @path, [ $node->[0], $node->[1] ];
-			}
+			push @seq, $node->{lat}, $node->{lon};
 		}
-		if (!@path) {
-			$log->notice("Skipping empty path generated from way $way_id");
+		if (!@seq or !@segments) {
+			$log->notice("Skipping empty path generated from way $way_id (seq=@seq, segments=@segments)");
 			next;
 		}
-		#my $path= Geo::SpatialDB::Path->new(
-		#	id  => "osm_$way_id",
-		#	seq => \@path
-		#);
-		# TODO: There should be multiple of these created
-		my @segments= ( Geo::SpatialDB::Entity::RouteSegment->new(
-			id     => $seg_id,
-			type   => $type,
-			($way->{tag}{oneway} && $way->{tag}{oneway} eq 'yes'? (oneway => 1) : ()),
-			path   => \@path,
-			# TODO: add tags related to road surface or speed limit
-			routes => [],
-		) );
+		# Store the path, now that it has all the vertices recorded.
+		$dest->put(path => $path->id, $path);
 
 		# Each Way becomes a Route.  TODO: combine connected routes with the same name
 		# into a single object and concatenate the RouteSegments.
-		
+
 		# Load or create a "Route" object to represent the name and metadata of this road.
 		my $road; # = TODO: search for road of same name connected to either end of this Way
 		if ($road) {
@@ -514,9 +546,8 @@ sub generate_roads {
 			# We don't bother creating a Road entry unless it has a name or tags
 			if (@names || keys %{ $way->{tag} }) {
 				$stats->{gen_road}++;
-				my $route_id= sprintf("%sw%X", $prefix, substr($way_id,1));
 				$road= Geo::SpatialDB::Entity::Route->new(
-					id       => $route_id,
+					id       => $next_ent_id++,
 					type     => $type,
 					names    => \@names,
 					tags     => $way->{tag},
@@ -525,56 +556,54 @@ sub generate_roads {
 			}
 		}
 		if ($road) {
-			# Add segment ref to the route
-			$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
+			# Add segment refs to the route, in addition to any it already had
+			push @{ $road->segments }, map $_->id, @segments;
 			# Add route reference to the segments
 			push @{ $_->routes }, $road->id
 				for @segments;
-			# Store the road temporarily (in case there are more changes needed)
-			$stor->put($tmp_prefix . $road->id, $road);
+			$tmp->put(route => $road->id, $road);
 		}
 		
 		# Scan the relations mentioning this Way for highway names,
 		# which we create as additional Route entities
-		for my $rel_id (grep { /^r/ } @{ $way->{rel} }) {
-			my $rel= $stor->get($rel_id);
+		for my $rel_id (@{ $way->{rel} }) {
+			my $rel= $tmp->get('relation', $rel_id);
 			if ($rel && ($rel->{tag}{type}//'') eq 'route' && ($rel->{tag}{route}//'') eq 'road') {
-				my $route_id= sprintf("%sr%X", $prefix, substr($rel_id,1));
-				$road= $stor->get("$tmp_prefix$route_id");
-				if (!$road) {
+				my $route_id= $tmp->get(relation_routes => $rel_id);
+				my $route;
+				if ($route_id) {
+					$route= $tmp->get(route => $route_id) // $dest->get(entity => $route_id);
+				} else {
 					$stats->{gen_road}++;
 					my @names= grep { defined } $rel->{tag}{name}, $rel->{tag}{ref};
 					# TODO: keep only the keys we care about
 					if (@names || keys %{ $rel->{tag} }) {
-						$road= Geo::SpatialDB::Entity::Route->new(
-							id       => $route_id,
-							type     => 'road.network',
+						$route= Geo::SpatialDB::Entity::Route->new(
+							id       => $next_ent_id++,
+							type     => 'rt.network',
 							names    => \@names,
 							tags     => $rel->{tag},
 							segments => [],
 						);
+						$tmp->put(relation_routes => $rel_id, $route->id);
 					}
 				}
-				if ($road) {
+				if ($route) {
 					# Add segment ref to the route
-					$road->segments([ @{ $road->segments//[] }, map { $_->id } @segments ]);
+					push @{ $route->segments }, map $_->id, @segments;
 					# Add route reference to the segments
-					push @{ $_->routes }, $road->id
+					push @{ $_->routes }, $route->id
 						for @segments;
-					# Then store the road again, to tmp storage
-					$stor->put("$tmp_prefix$route_id", $road);
+					# Then store the road again
+					$tmp->put(route => $route->id, $route);
 				}
 			}
-			#if ($rel && ($rel->{tag}{type}//'') eq 'route' && !$rel->{tag}{route}) {
-			#	use DDP;
-			#	p $rel;
-			#}
 		}
 		
 		# The segments are finished, so we import them
 		$geodb->add_entity($_) for @segments;
 		$stats->{gen_road_seg}+= @segments;
-		$stats->{gen_road_seg_pts}+= scalar @path;
+		$stats->{gen_road_seg_pts}+= @seq/2;
 	}
 	continue {
 		$progress->inc if $progress;
@@ -583,13 +612,16 @@ sub generate_roads {
 	# Now, all segments are imported, but the routes are in tmp storage.
 	# Copy them across.
 	my $n_routes= 0;
-	$iter= $stor->iterator($tmp_prefix);
-	my ($k, $v);
-	while (($k, $v)= $iter->() and index($k, $tmp_prefix)==0) {
+	$iter= $tmp->iterator('route');
+	while (my ($k, $v)= $iter->()) {
 		$geodb->add_entity($v);
 		++$n_routes;
 	}
-	$stor->rollback;
+	# Update the current auto-inc keys of the destination
+	$dest->indexes->{entity}{next_id} //= $next_ent_id;
+	$dest->indexes->{path}{next_id} //= $next_path_id;
+	$dest->_save_indexes if $dest->can('_save_indexes'); # TODO: come up with a public API for this
+	$tmp->rollback; # throw away scratch work
 	return $n_routes;
 }
 
