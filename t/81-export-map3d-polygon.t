@@ -1,7 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB ':all';
-use Geo::SpatialDB::Math qw/ polygon vector /;
+use Geo::SpatialDB::Math qw/ polygon vector plane /;
 
 my @tests= (
 	[ 'square in half',
@@ -38,7 +38,7 @@ my @tests= (
 for (@tests) {
 	my ($name, $polygon, $expected, @plane_and_refpt)= @$_;
 	$polygon= polygon(map vector(@$_), @$polygon);
-	my @planes= map vector(@{$_->[0]})->set_projection_origin($_->[1]), @plane_and_refpt;
+	my @planes= map plane(@{$_->[0]}, $_->[1]), @plane_and_refpt;
 	$polygon->clip_to_planes(@planes);
 	is_deeply( $polygon, $expected, $name );
 }

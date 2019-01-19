@@ -6,6 +6,7 @@ use Exporter 'import';
 use Math::Trig qw( spherical_to_cartesian pi );
 our @EXPORT_OK= qw( vector vector_latlon );
 
+# ABSTRACT: Minimalist class representing a vector or vertex
 # VERSION
 
 =head1 SYNOPSIS
