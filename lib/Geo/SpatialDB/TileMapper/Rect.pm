@@ -1,12 +1,38 @@
 package Geo::SpatialDB::TileMapper::Rect;
 use Moo 2;
+with 'Geo::SpatialDB::TileMapper';
 
+# ABSTRACT: Divide the globe into lat/lon rectangles
 # VERSION
+
+=head1 DESCRIPTION
+
+This L<TileMapper|Geo::SpatialDB::TileMapper> uses very simple math of dividing
+the globe into some number of latitude divisions and longitude divisions, forming
+"rectangular" tiles.
+
+=head1 ATTRIBUTES
+
+=head2 lat_divs
+
+Number of divisions of latitude (out of 180 degrees)
+
+=head2 lon_divs
+
+Number of longitude divisions (out of 360 degrees)
+
+=cut
 
 has lat_divs   => ( is => 'ro', required => 1 );
 has lon_divs   => ( is => 'ro', required => 1 );
 
-sub tiles_in_range {
+=head1 METHODS
+
+See L<TileMapper|Geo::SpatialDB::TileMapper>.
+
+=cut
+
+sub tiles_for_area {
 	my ($self, $llarea)= @_;
 	return $self->_tiles_in_range(@{ $llarea->as_llbox });
 }

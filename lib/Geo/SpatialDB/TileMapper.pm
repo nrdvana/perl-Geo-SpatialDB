@@ -10,9 +10,9 @@ non-overlapping tiles each with a distinct ID.
 
 =head1 METHODS
 
-=head2 tiles_in_range
+=head2 tiles_for_area
 
-  my $tile_ids= $mapper->tiles_in_range($llbox_or_llrad);
+  my $tile_ids= $mapper->tiles_for_area($llbox_or_llrad);
 
 Returns an array of all tile IDs which intersect the lat/lon range provided.
 The argument may be a L<Geo::SpatialDB::Math::LLBox> or L<Geo::SpatialDB::Math::LLRad>.
@@ -32,9 +32,13 @@ coordinate land exactly on the boundary, but the mapping must be consistent.
 
 Return a list of spherical coordinates defining the vertices of a tile in
 counter-clockwise winding order when viewing the tile from above.
-(Why clockwise? because it's the OpenGL default)
+(counter-clockwise is the OpenGL default)
 
 =cut
+
+requires 'tiles_for_area';
+requires 'tile_at';
+requires 'tile_polygon';
 
 1;
 
