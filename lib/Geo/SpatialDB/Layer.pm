@@ -93,6 +93,20 @@ sub _build_type_filter_regex {
 	return qr/$re/;
 }
 
+sub get_ctor_args {
+	my $self= shift;
+	my %data= %$self;
+	for (keys %data) {
+		delete $data{$_}
+			if $_ =~ /^[^a-z]/
+			or !defined $data{$_}
+			or (ref $data{$_} eq 'HASH' && !keys %{ $data{$_} });
+	}
+	ref $_ && ref($_)->can('get_ctor_args') && ($_= $_->get_ctor_args)
+		for values %data;
+	\%data;
+}
+
 sub add_entity_to_tile {
 	my ($self, $layer, $tile_id, $entity)= @_;
 	my $stor= $self->storage;

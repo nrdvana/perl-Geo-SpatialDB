@@ -127,7 +127,7 @@ sub load_layers {
 
 sub save_layers {
 	my $self= shift;
-	my @layers= map { $_->TO_JSON } $self->layer_list;
+	my @layers= map $_->get_ctor_args, $self->layer_list;
 	$self->storage->put('.layers', \@layers);
 }
 
