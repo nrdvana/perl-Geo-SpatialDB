@@ -128,7 +128,7 @@ sub _initialize_lmdb {
 	my ($self, $env)= @_;
 	my $txn= $env->BeginTxn;
 	my $schema= $txn->OpenDB('INFORMATION_SCHEMA', MDB_CREATE);
-	$schema->put('indexes', freeze({ INFORMATION_SCHEMA => { name => 'INFORMATION_SCHEMA' }}));
+	$schema->put('indexes', '1'.freeze({ INFORMATION_SCHEMA => { name => 'INFORMATION_SCHEMA' }}));
 	undef $schema;
 	$txn->commit;
 	$self->save_config;
@@ -142,12 +142,6 @@ sub _build__txn {
 
 has _dbs => ( is => 'rw', default => sub { +{} } );
 has _cursors => ( is => 'rw', default => sub { +{} } );
-
-my $storable_magic= substr(freeze({}), 0, 1);
-sub die_invalid_assumption {
-	die "Geo::SpatialDB author has made invalid assumptions for your version of Storable and needs to fix his code";
-}
-$storable_magic =~ /[\0-\x19]/ or die_invalid_assumption();
 
 =head1 METADATA METHODS
 
@@ -209,8 +203,7 @@ sub get {
 	my ($self, $dbname, $key)= @_;
 	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
 	my $v= $db->get($key);
-	$v= thaw($v) if defined $v and substr($v, 0, 1) eq $storable_magic;
-	return $v;
+	return (!defined $v? $v : substr($v,0,1)? thaw(substr($v,1)) : substr($v,1));
 }
 
 =head2 put
@@ -238,14 +231,7 @@ sub put {
 		croak $err if $ret && $ret != MDB_NOTFOUND;
 		return;
 	}
-	elsif (ref $v) {
-		$v= freeze($v);
-		substr($v, 0, 1) eq $storable_magic
-			or die_invalid_assumption();
-	} else {
-		ord(substr($v, 0, 1)) > 0x1F or croak("scalars must not start with control characters");
-	}
-	$db->put($k, $v);
+	$db->put($k, ref $v? '1'.freeze($v) : "0".$v);
 }
 
 =head2 commit, rollback
@@ -318,8 +304,7 @@ sub iterator {
 			croak $LMDB_File::last_err
 		}
 		return $key unless wantarray;
-		$data= thaw($data) if substr($data, 0, 1) eq $storable_magic;
-		return ($key, $data);
+		return ($key, substr($data,0,1)? thaw(substr($data,1)) : substr($data,1));
 	}
 }
 
