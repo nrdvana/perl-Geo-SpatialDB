@@ -50,11 +50,34 @@ A navigable path for some mode of transportation.
 
 A geological or terrestrial feature (river, lake, beach, mountain, etc)
 
-=item pol
+=item geo.wb
 
-A human governance boundary or area
+Water Body, non-flowing (lake, pond)
+
+=item geo.wp
+
+Water Path (river, stream, creek)
+
+=item gov
+
+A human governance boundary or area (state, county, township, zip code, 
 
 =item 
+
+=back
+
+The taxonomy is semi-independent from the Entity classes.
+The following classes are returned from the public API:
+
+=over
+
+=item L<Area|Geo::SpatialDB::Entity::Area>
+
+Areas are bounded 2D spaces.  Any space on the map that you think of as
+"passing into" rather than "going to" is classified as an area.
+States, Counties, Parks, zip codes, and etc are all stored as Areas.
+An area will provide both a bounding path and circles of approximation for
+quick collision tests.
 
 =item L<Location|Geo::SpatialDB::Location>
 
@@ -65,40 +88,27 @@ coordinate and optional radius.  Being a logical entity, multiple locations
 may be stacked on the same coordinates.  Locations that share coordinates do
 not contain references to eachother.
 
-=item L<RouteSegment|Geo::SpatialDB::RouteSegment>
+=item L<Route|Geo::SpatialDB::Entity::Route>
+
+Route objects represent a logical named route.  They may be discontinuous,
+and redundant with other routes.  Any road metadata that doesn't directly
+describe the physical RouteSegment goes here.
+
+=item L<RouteSegment|Geo::SpatialDB::Entity::RouteSegment>
 
 Route segments are the basic unit of navigable paths across the map.
 It could be a piece of a road, foot path, water way, railroad, etc.
-A route references one or more Path objects to form an un-broken sequence
-of coordinates.  Segments are broken at any intersection (but not overpass).
-Multiple logical routes (like a highway which merges with a local street as
-it passes through town) may share the physical route segments of the map.
+A route has a distinct ID, and its endpoints also have distinct IDs, so this
+can be used by routing algorithms, while also representing the physical
+divisions in a route, like the segment of a road which is 3 lanes before it
+merges back to 2.
 
 If you are building a routing algorithm, all the relevant data you need
 should be contained in RouteSegment objects.  You would then consult the
 related Route objects to determine how to describe the physical route
-to the user.
-
-=item L<Route|Geo::SpatialDB::Route>
-
-Route objects represent a logical named route.  They may be discontinuous,
-and redundant with other routes.  Any metadata not needed for calculating
-a physical route goes here.
-
-=item L<Area|Geo::SpatialDB::Area>
-
-Areas are 2D spaces.  Any space on the map that you think of as "passing into"
-rather than "going to" is classified as an area.  States, Counties, Parks,
-zip codes, and etc are all stored as Areas.  An area will provide both a
-bounding path and circles of approximation, for quick collision tests.
-
-=item L<Path|Geo::SpatialDB::Path>
-
-Paths are an implementation detail to prevent repeating sequences of coordinates.
-Paths may be used by one or more other entities.
-Paths have no metadata of their own.
-In a future version, paths might be replaced with an automatic coordinate
-compression/decompression system, so try not to write code that depends on them.
+to the user.  (In the USA at least, it is common for multiple logical routes
+to share the same physical road, so any given stretch of road might have
+many names, some of which are more relevant to the traveler than others.)
 
 =back
 
