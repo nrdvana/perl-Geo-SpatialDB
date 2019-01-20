@@ -202,24 +202,38 @@ Get the value of a key, or undef if the key doesn't exist.  Dies if the index do
 sub get {
 	my ($self, $dbname, $key)= @_;
 	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
-	my $v= $db->get($key);
+	my $v= (exists $self->{_written} && exists $self->{_written}{$dbname}{$key})?
+		$self->{_written}{$dbname}{$key} : $db->get($key);
 	return (!defined $v? $v : substr($v,0,1)? thaw(substr($v,1)) : substr($v,1));
 }
 
 =head2 put
 
-  $stor->put( $index_name, $key, $value );
+  $stor->put( $index_name, $key, $value, %flags );
 
 Store a value in the database.  If the key exists it will overwrite the old value.
 If C<$value> is undefined, this deletes the key from the database.  If $index_name does
 not exist, it dies.
+
+If C<%flags> include C<< lazy => 1 >> then the write will not take place immediately,
+with the idea that the value might change many times before the next L</commit>.
 
 =cut
 
 sub put {
 	my ($self, $dbname, $k, $v)= @_;
 	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
-	$self->{_written}= 1;
+	$v= ref $v? '1'.freeze($v) : "0".$v if defined $v;
+	if (@_ > 4) {
+		my %flags= @_[4..$#_];
+		# iterating non-existent keys is awkward, so make sure it exists.
+		# If not, write the value even though it was lazy.
+		if (exists $flags{lazy} && (!defined $v || defined $db->get($k))) {
+			$self->{_written}{$dbname}{$k}= $v;
+			return;
+		}
+	}
+	delete $self->{_written}{$dbname}{$k};
 	if (!defined $v) {
 		local $LMDB_File::die_on_err= 0;
 		my ($ret, $err);
@@ -231,7 +245,7 @@ sub put {
 		croak $err if $ret && $ret != MDB_NOTFOUND;
 		return;
 	}
-	$db->put($k, ref $v? '1'.freeze($v) : "0".$v);
+	$db->put($k, $v);
 }
 
 =head2 commit, rollback
@@ -249,13 +263,34 @@ see concurrent changes by other processes, you need to call 'commit' or 'rollbac
 sub commit {
 	my $self= shift;
 	if ($self->_has_txn) {
+		# Write any lazy-puts that havent been written yet
+		if (my $w= $self->_written) {
+			for my $dbname (keys %$w) {
+				my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
+				for my $k (keys %{$w->{$dbname}}) {
+					my $v= $w->{$dbname}{$k};
+					if (!defined $v) {
+						local $LMDB_File::die_on_err= 0;
+						my ($ret, $err);
+						{
+							local $@;
+							$ret= $db->del($k);
+							$err= $@;
+						}
+						croak $err if $ret && $ret != MDB_NOTFOUND;
+					} else {
+						$db->put($k, $v);
+					}
+				}
+			}
+			$self->_written(undef);
+		}
 		# Need to forcibly clean up all other handles to this txn, due to LMDB_Storable GC bugs
 		%{ $self->_cursors }= ();
 		%{ $self->_dbs }= ();
 		$self->_txn->commit;
 		$self->_clear_txn;
 	}
-	$self->{_written}= 0;
 }
 
 sub rollback {
@@ -267,7 +302,7 @@ sub rollback {
 		$self->_txn->abort;
 		$self->_clear_txn;
 	}
-	$self->{_written}= 0;
+	$self->_written(undef);
 }
 
 =head2 iterator
@@ -293,8 +328,10 @@ sub iterator {
 	my $cursor= $db->Cursor;
 	$self->_cursors->{$cursor}= $cursor; # this is the official reference
 	weaken($cursor); # hold onto a weak ref so we know when it's gone
+	weaken($self);
 	my $data;
 	return sub {
+		again:
 		local $LMDB_File::die_on_err= 0;
 		croak "Iterator refers to a terminated transaction" unless $cursor;
 		my $ret= $cursor->get($key, $data, $op);
@@ -302,6 +339,11 @@ sub iterator {
 		if ($ret) {
 			return if $ret == MDB_NOTFOUND;
 			croak $LMDB_File::last_err
+		}
+		# Check for lazy-writes.
+		if (defined $self && $self->{_written} && exists $self->{_written}{$dbname}{$key}) {
+			$data= $self->{_written}{$dbname}{$key};
+			goto again unless defined $data;
 		}
 		return $key unless wantarray;
 		return ($key, substr($data,0,1)? thaw(substr($data,1)) : substr($data,1));

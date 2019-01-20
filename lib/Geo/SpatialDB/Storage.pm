@@ -168,7 +168,7 @@ requires 'drop_index';
 
 =head2 put
 
-  $storage->put( $index_name, $key, $value );
+  $storage->put( $index_name, $key, $value, %flags );
 
 =head2 commit
 
