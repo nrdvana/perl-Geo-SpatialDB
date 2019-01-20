@@ -10,6 +10,10 @@ use_ok 'Geo::SpatialDB::TileMapper::Rect';
 my $tmap= new_ok 'Geo::SpatialDB::TileMapper::Rect', [ lat_divs => 18, lon_divs => 36 ],
 	'Rect tilemapper';
 
+diag explain $tmap->get_ctor_args;
+my $clone= Geo::SpatialDB::TileMapper->coerce($tmap->get_ctor_args);
+is_deeply( $tmap->get_ctor_args, $clone->get_ctor_args, 'clones match' );
+
 my @tiles= (
 	#           lat0,lon0,  lat1,lon1
 	[    0 => [   80,   0,   90,  10  ]],

@@ -40,5 +40,8 @@ requires 'tiles_for_area';
 requires 'tile_at';
 requires 'tile_polygon';
 
+with 'Geo::SpatialDB::Serializable';
+sub CLASSNAME_ROOT { __PACKAGE__ }
+
 1;
 

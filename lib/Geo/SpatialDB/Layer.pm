@@ -79,12 +79,22 @@ layer.  This is not a well thought-out API, but whatever.
 has id                => ( is => 'ro', required => 1 );
 has name              => ( is => 'rw', required => 1 );
 has description       => ( is => 'rw' );
-has mapper            => ( is => 'rw', required => 1 );
+has _mapper_arg       => ( is => 'rw', init_arg => 'mapper', required => 1 );
+has mapper            => ( is => 'lazy', init_arg => undef );
 has max_feature_size  => ( is => 'rw' );
 has min_feature_size  => ( is => 'rw' );
 has type_filters      => ( is => 'rw' );
 has type_filter_regex => ( is => 'lazy' );
 has render_config     => ( is => 'rw' );
+
+sub _build_mapper {
+	Geo::SpatialDB::TileMapper->coerce(shift->_mapper_arg);
+}
+
+sub BUILD {
+	my $self= shift;
+	$self->mapper; # force instantiation
+}
 
 sub _build_type_filter_regex {
 	my $self= shift;
