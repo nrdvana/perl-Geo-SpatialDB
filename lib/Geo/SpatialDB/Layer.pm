@@ -1,6 +1,9 @@
 package Geo::SpatialDB::Layer;
-
 use Moo 2;
+use Geo::SpatialDB::TileMapper;
+
+# ABSTRACT: Holds parameters for how to index a subset of entities in the database
+# VERSION
 
 =head1 DESCRIPTION
 
@@ -16,10 +19,9 @@ data from road data from street address data and so on.
 
 =head1 ATTRIBUTES
 
-=head2 id
+=head2 code
 
-The identity of the layer.  This needs to coordinate with the SpatialDB's list
-of which layer is stored in which database index.
+The internal id of the layer.  This is used in the index names of C<< $geodb->storage >>.
 
 =head2 name
 
@@ -76,8 +78,9 @@ layer.  This is not a well thought-out API, but whatever.
 
 =cut
 
-has id                => ( is => 'ro', required => 1 );
+has code              => ( is => 'ro', required => 1 );
 has name              => ( is => 'rw', required => 1 );
+sub index_name           { 'layer.' . shift->code }
 has description       => ( is => 'rw' );
 has _mapper_arg       => ( is => 'rw', init_arg => 'mapper', required => 1 );
 has mapper            => ( is => 'lazy', init_arg => undef );
@@ -98,7 +101,7 @@ sub BUILD {
 
 sub _build_type_filter_regex {
 	my $self= shift;
-	return qr// unless @{ $self->type_filters || [] };
+	return undef unless @{ $self->type_filters || [] };
 	my $re= join '|', map { ref $_->{type}? $_->{type} : qr/\Q$_->{type}\E/ } @{ $self->type_filters };
 	return qr/$re/;
 }
@@ -117,15 +120,10 @@ sub get_ctor_args {
 	\%data;
 }
 
-sub add_entity_to_tile {
-	my ($self, $layer, $tile_id, $entity)= @_;
-	my $stor= $self->storage;
-	my $bucket_key= 'T'.$layer->id.'.'.$tile_id;
-	my $bucket= $stor->get($bucket_key) // {};
-	my %seen;
-	$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $entity->id ];
-	$stor->put($bucket_key, $bucket);
-	return $bucket;
+sub includes_entity {
+	my ($self, $entity)= @_;
+	return !defined $self->type_filter_regex
+		|| ($entity->type =~ $self->type_filter_regex);
 }
 
 1;

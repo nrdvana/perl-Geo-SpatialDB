@@ -90,21 +90,7 @@ class to preserve the value of the object.  This data should also be valid for J
 
 =cut
 
-sub TO_JSON { shift->get_ctor_args }
-
-# This is a generic implementation.  Subclasses probably need to override it.
-sub get_ctor_args {
-	my $self= shift;
-	my %data= %$self;
-	for (keys %data) {
-		delete $data{$_}
-			if $_ =~ /^[^a-z]/
-			or !defined $data{$_}
-			or (ref $data{$_} eq 'HASH' && !keys %{ $data{$_} });
-	}
-	ref $_ && ref($_)->can('get_ctor_args') && ($_= $_->get_ctor_args)
-		for values %data;
-	\%data;
-}
+with 'Geo::SpatialDB::Serializable';
+sub CLASSNAME_ROOT { __PACKAGE__ }
 
 1;

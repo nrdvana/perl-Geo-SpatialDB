@@ -5,6 +5,12 @@ use Carp;
 use Geo::SpatialDB::Layer;
 use Geo::SpatialDB::Math ':all';
 use Geo::SpatialDB::Storage;
+# Need to load all the classes that Storable might want to create
+use Geo::SpatialDB::Layer;
+use Geo::SpatialDB::Path;
+use Geo::SpatialDB::Entity::Route;
+use Geo::SpatialDB::Entity::RouteSegment;
+use Geo::SpatialDB::Entity::Location;
 use namespace::clean;
 
 # ABSTRACT: Generic reverse-geocoding engine on top of key/value storage
@@ -112,72 +118,123 @@ many names, some of which are more relevant to the traveler than others.)
 
 =back
 
+=head1 ATTRIBUTES
+
+=head2 layers
+
+The configured layers, mapped by L<Geo::SpatialDB::Layer/code>.
+Layers must be configured before calling add_entity, else the database
+will need re-built.
+
+=head2 layer_list
+
+Convenience accessor for C<< values %{ $geodb->layers } >>
+
+=head2 storage
+
+An instance of L<Geo::SpatialDB::Storage>.
+
 =cut
 
-has layers           => ( is => 'rw', builder => 'load_layers', lazy => 1 );
-sub layer_list          { @{ shift->layers } }
-has storage          => ( is => 'rw', coerce => \&Geo::SpatialDB::Storage::coerce );
+has layers           => ( is => 'lazy' );
+sub layer_list          { values %{ shift->layers } }
+has _storage_arg     => ( is => 'rw', init_arg => 'storage' );
+has storage          => ( is => 'lazy', init_arg => undef );
 
-sub load_layers {
+sub _build_storage {
+	my $sto= Geo::SpatialDB::Storage->coerce(shift->_storage_arg);
+	$sto->indexes->{entity} or $sto->create_index('entity', int_key => 1);
+	$sto->indexes->{path} or $sto->create_index('path', int_key => 1);
+	$sto->indexes->{layer} or $sto->create_index('layer');
+	$sto;
+}
+
+sub _build_layers {
 	my ($self)= @_;
-	my $l= $self->storage->get('.layers') || [];
-	$self->layers($l);
-	return $l;
+	return {} unless $self->storage->indexes->{layer};
+	my $i= $self->storage->iterator('layer');
+	my %layers;
+	while (my ($k, $v)= $i->()) {
+		$layers{$v->code}= $v;
+	}
+	return \%layers;
 }
 
-sub save_layers {
+sub _save_layers {
 	my $self= shift;
-	my @layers= map $_->get_ctor_args, $self->layer_list;
-	$self->storage->put('.layers', \@layers);
+	$self->storage->create_index('layer')
+		unless $self->storage->indexes->{layer};
+	$self->storage->put('layer', $_->code => $_) for $self->layer_list;
 }
+
+=head1 METHODS
+
+=head2 alloc_path_id
+
+Reserve a new path_id for a later call to add_path
+
+=head2 alloc_entity_id
+
+Reserve a new entity_id for later call to add_entity
+
+=cut
+
+sub alloc_path_id {
+	my ($self, $count)= @_;
+	my $id= $self->storage->get(INFORMATION_SCHEMA => 'next_path_id') || 1;
+	$self->storage->put(INFORMATION_SCHEMA => 'next_path_id', $id+($count||1), lazy => 1);
+	$id;
+}
+
+sub alloc_entity_id {
+	my ($self, $count)= @_;
+	my $id= $self->storage->get(INFORMATION_SCHEMA => 'next_entity_id') || 1;
+	$self->storage->put(INFORMATION_SCHEMA => 'next_entity_id', $id+($count||1), lazy => 1);
+	$id;
+}
+
+=head2 add_entity
+
+  $ent= Geo::SpatialDB::Entity::...->new( id => $geodb->alloc_entity_id, ...);
+  $geodb->add_entity( $ent );
+
+Add one entity to the database, indexing it within any appropriate layers.
+
+=cut
 
 sub add_entity {
 	my ($self, $e)= @_;
 	my %added;
 	my $stor= $self->storage;
+	$stor->put(entity => $e->id, $e);
 	for my $layer ($self->layer_list) {
-		next unless $e->type =~ $layer->type_filter_regex;
-		$layer->add_entity($self, $e);
+		next unless $layer->includes_entity($e);
+		my $index_name= $layer->index_name;
+		$self->storage->indexes->{$index_name} or $self->storage->create_index($index_name);
 		my $features= $e->features_at_resolution($layer->min_feature_size);
-		my $layer_id= $layer->id;
+		my %added_to_tile;
 		for my $feature (@$features) {
-			next unless $feature->{radius} >= $layer->min_feature_size
-			        and $feature->{radius} <= $layer->max_feature_size;
-			for my $tile_id ($layer->mapper->tiles_in_range(latlon_radius_to_range(@{$feature}{'lat','lon','radius'}))) {
-				$self->_layer_tile_add_entity($layer, $tile_id, $e);
-				++$added{$layer->name};
+			my $rad= $feature->radius;
+			next unless (!$layer->min_feature_size or $rad >= $layer->min_feature_size)
+			        and (!$layer->max_feature_size or $rad <= $layer->max_feature_size);
+			for my $tile_id (grep !$added_to_tile{$_}++, @{$layer->mapper->tiles_in($feature)}) {
+				my $bucket= $stor->get($index_name, $tile_id) // {};
+				my $ents= ($bucket->{ent} //= []);
+				my %seen= map { $_ => 1 } @$ents;
+				if (!$seen{$e->id}) {
+					push @$ents, $e->id;
+					$stor->put($index_name, $tile_id, $bucket);
+					++$added{$layer->code};
+				}
 			}
 		}
 	}
-	return undef unless keys %added;
-	# Store entity if added to any layer
-	$stor->put('e'.$e->id, $e);
 	return \%added;
 }
 
-sub _layer_tile_add_entity {
-	my ($self, $layer, $tile_id, $entity)= @_;
-	my $stor= $self->storage;
-	my $bucket_key= 'T'.$layer->id.'.'.$tile_id;
-	my $bucket= $stor->get($bucket_key) // {};
-	my %seen;
-	$bucket->{ent}= [ grep { !$seen{$_}++ } @{ $bucket->{ent}//[] }, $entity->id ];
-	$stor->put($bucket_key, $bucket);
-	return $bucket;
-}
-
-=head2 find_at
-
-  my $entities= $db->find_at($lat, $lon, $radius, $min_feature_size);
-
-Convenience method for L</find_in> which takes a lat/lon and radius instead
-of lat/lon bounding box.  C<$min_feature_size> defaults to C<< $radius/200 >>
-assuming a screen about 1600 pixels wide and features that need at least 4
-pixels to display as anything.
-
 =head2 find_in
 
-  my $entities= $db->find_at($lat0, $lon0, $lat1, $lon1, $min_feature_size);
+  my $entities= $db->find_in($llbox_or_llarea, $min_feature_size);
 
 Returns all entities relevant to C<$min_feature_size> in any tile that
 intersects with the given lat/lon bounding box.  The bounding box should
@@ -189,28 +246,27 @@ the ending value.
 Note that C<$min_feature_size> is not so much a measurement of the size of
 features as it is a measure of the I<significance> of an entity in terms of
 distance.  This measurement simply filters out L</layers> whose maximum
-feature size is too small to be useful.
+feature size is too small to be useful.  C<$min_feature_size> defaults to
+C<< $radius/200 >>, assuming a fullscreen bounding box with screen about 1600
+pixels wide and features that need at least 4 pixels to display as anything.
 See discussion in L<Geo::SpatialDB::Layer/min_feature_size>.
 
 =cut
 
-sub find_at {
-	my ($self, $lat, $lon, $radius, $min_feature_size)= @_;
-	$self->find_in(radius_to_range($lat, $lon, $radius), $min_feature_size || $radius / 200);
-}
-
 sub find_in {
-	my ($self, $lat0, $lon0, $lat1, $lon1, $min_feature_size)= @_;
+	my ($self, $range, $min_feature_size)= @_;
+	ref $range && ref($range)->can('radius') or croak "find_in() takes a range of LLRad or LLBox";
+	$min_feature_size //= $range->radius / 200;
 	my $stor= $self->storage;
-	my $range= [ $lat0, $lon0, $lat1, $lon1 ];
 	my %result= ( range => $range );
 	for my $layer ($self->layer_list) {
-		next unless $layer->max_feature_size > $min_feature_size;
-		for my $tile_id ($layer->mapper->tiles_in_range(@$range)) {
-			my $bucket= $stor->get('l'.$layer->id.'.'.$tile_id)
+		next unless !$layer->max_feature_size || ($layer->max_feature_size >= $min_feature_size);
+		my $index_name= $layer->index_name;
+		for my $tile_id (@{ $layer->mapper->tiles_in($range) }) {
+			my $bucket= $stor->get($index_name, $tile_id)
 				or next;
 			for (@{ $bucket->{ent} || [] }) {
-				$result{entities}{$_} ||= $self->storage->get("e$_");
+				$result{entities}{$_} ||= $self->storage->get(entity => $_);
 			}
 		}
 	}

@@ -202,7 +202,7 @@ Get the value of a key, or undef if the key doesn't exist.  Dies if the index do
 sub get {
 	my ($self, $dbname, $key)= @_;
 	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
-	my $v= (exists $self->{_written} && exists $self->{_written}{$dbname}{$key})?
+	my $v= (defined $self->{_written} && exists $self->{_written}{$dbname}{$key})?
 		$self->{_written}{$dbname}{$key} : $db->get($key);
 	return (!defined $v? $v : substr($v,0,1)? thaw(substr($v,1)) : substr($v,1));
 }

@@ -36,7 +36,7 @@ counter-clockwise winding order when viewing the tile from above.
 
 =cut
 
-requires 'tiles_for_area';
+requires 'tiles_in';
 requires 'tile_at';
 requires 'tile_polygon';
 

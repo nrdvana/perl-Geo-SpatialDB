@@ -28,11 +28,21 @@ has lon_divs   => ( is => 'ro', required => 1 );
 
 =head1 METHODS
 
-See L<TileMapper|Geo::SpatialDB::TileMapper>.
+See L<TileMapper|Geo::SpatialDB::TileMapper> for:
+
+=over
+
+=item L<tiles_in|Geo::SpatialDB::TileMapper/tiles_in>
+
+=item L<tile_at|Geo::SpatialDB::TileMapper/tile_at>
+
+=item L<tile_polygon|Geo::SpatialDB::TileMapper/tile_polygon>
+
+=back
 
 =cut
 
-sub tiles_for_area {
+sub tiles_in {
 	my ($self, $llarea)= @_;
 	return $self->_tiles_in_range(@{ $llarea->as_llbox });
 }
