@@ -299,6 +299,38 @@ sub generate_route_polygons {
 	return \@result;
 }
 
+=head1 pack_polygons
+
+This is a helper method to pack up a bunch of polygons into a buffer, such as a vertex array
+buffer for OpenGL.
+
+=cut
+
+sub pack_polygons {
+	my ($self, $entities, $format)= @_;
+	my $buffer= '';
+	my $fmt_fn= $self->can('_extract_fmt_'.$format) or croak "Unknown format '$format'";
+	for my $e (@$entities) {
+		for my $p (@{$e->{polygons}}) {
+			# If polygon has > 3 vertices, iterate from 2..MAX making triangles
+			my @first= $fmt_fn->($e, $p->[0]);
+			$buffer .= pack('f*', @first, $fmt_fn->($e, $p->[$_-1]), $fmt_fn->($e, $p->[$_]))
+				for 2..$#$p;
+		}
+	}
+	return $buffer;
+}
+
+# Plain X,Y,Z coordinates
+sub _extract_fmt_xyz {
+	pack 'f*', $_[1][0..2];
+}
+# Texture ID, texture S,T, and vertex X,Y,Z
+sub _extract_fmt_tx_st_xyz {
+	$_[0]{tx_id} or croak("Need to assign texture ID for entity ".$_[0]{entity});
+	pack 'Lf*', $_[0]{tx_id}, @{$_[1]}[3,4,0,1,2];
+}
+
 sub _generate_polygons_for_path {
 	my ($self, $path, $prev_info, $start_info, $end_info, $next_info)= @_;
 	my $width=   $start_info->{width}   // croak "start_info->{width} is required";
