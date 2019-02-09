@@ -2,9 +2,9 @@ package Geo::SpatialDB;
 use Moo 2;
 use Log::Any '$log';
 use Carp;
-use Geo::SpatialDB::Layer;
 use Geo::SpatialDB::Math ':all';
 use Geo::SpatialDB::Storage;
+use Geo::SpatialDB::Layer;
 # Need to load all the classes that Storable might want to create
 use Geo::SpatialDB::Layer;
 use Geo::SpatialDB::Path;
@@ -155,7 +155,7 @@ sub _build_layers {
 	my $i= $self->storage->iterator('layer');
 	my %layers;
 	while (my ($k, $v)= $i->()) {
-		$layers{$v->code}= $v;
+		$layers{$k}= $v;
 	}
 	return \%layers;
 }
@@ -193,6 +193,30 @@ sub alloc_entity_id {
 	$id;
 }
 
+=head2 add_layer
+
+  $geodb->add_layer( $layer_or_hashref );
+
+This adds a new layer to the DB, and then iterates all entities to build the index for that
+layer.
+
+=cut
+
+sub add_layer {
+	my $self= shift;
+	my $layer= @_ && ref($_[0]) && ref($_[0])->can('code')? $_[0]
+		: @_ == 1 && ref($_[0]) eq 'HASH'? Geo::SpatialDB::Layer->new($_[0])
+		: Geo::SpatialDB::Layer->new(@_);
+	$self->layers->{$layer->code}= $layer;
+	$self->_save_layers;
+	my $iter= $self->storage->iterator('entity');
+	my $added= 0;
+	while (my ($k, $v)= $iter->()) {
+		++$added if $self->_add_entity_to_layer($layer, $v);
+	}
+	return $added;
+}
+
 =head2 add_entity
 
   $ent= Geo::SpatialDB::Entity::...->new( id => $geodb->alloc_entity_id, ...);
@@ -205,31 +229,37 @@ Add one entity to the database, indexing it within any appropriate layers.
 sub add_entity {
 	my ($self, $e)= @_;
 	my %added;
-	my $stor= $self->storage;
-	$stor->put(entity => $e->id, $e);
+	$self->storage->put(entity => $e->id, $e);
 	for my $layer ($self->layer_list) {
-		next unless $layer->includes_entity($e);
-		my $index_name= $layer->index_name;
-		$self->storage->indexes->{$index_name} or $self->storage->create_index($index_name);
-		my $features= $e->features_at_resolution($layer->min_feature_size);
-		my %added_to_tile;
-		for my $feature (@$features) {
-			my $rad= $feature->radius;
-			next unless (!$layer->min_feature_size or $rad >= $layer->min_feature_size)
-			        and (!$layer->max_feature_size or $rad <= $layer->max_feature_size);
-			for my $tile_id (grep !$added_to_tile{$_}++, @{$layer->mapper->tiles_in($feature)}) {
-				my $bucket= $stor->get($index_name, $tile_id) // {};
-				my $ents= ($bucket->{ent} //= []);
-				my %seen= map { $_ => 1 } @$ents;
-				if (!$seen{$e->id}) {
-					push @$ents, $e->id;
-					$stor->put($index_name, $tile_id, $bucket);
-					++$added{$layer->code};
-				}
+		my $added_to_tile= $self->_add_entity_to_layer($layer, $e);
+		$added{$layer->code} += $added_to_tile if $added_to_tile;
+	}
+	return \%added;
+}
+sub _add_entity_to_layer {
+	my ($self, $layer, $e)= @_;
+	return 0 unless $layer->includes_entity($e);
+	my $stor= $self->storage;
+	my $index_name= $layer->index_name;
+	$self->storage->indexes->{$index_name} or $self->storage->create_index($index_name);
+	my $features= $e->features_at_resolution($layer->min_feature_size);
+	my %added_to_tile;
+	for my $feature (@$features) {
+		my $rad= $feature->radius;
+		next unless (!$layer->min_feature_size or $rad >= $layer->min_feature_size)
+		        and (!$layer->max_feature_size or $rad <= $layer->max_feature_size);
+		for my $tile_id (grep !$added_to_tile{$_}++, @{$layer->mapper->tiles_in($feature)}) {
+			my $bucket= $stor->get($index_name, $tile_id) // {};
+			my $ents= ($bucket->{ent} //= []);
+			my %seen= map { $_ => 1 } @$ents;
+			if (!$seen{$e->id}) {
+				push @$ents, $e->id;
+				$stor->put($index_name, $tile_id, $bucket);
+				++$added_to_tile{$tile_id};
 			}
 		}
 	}
-	return \%added;
+	return scalar keys %added_to_tile;
 }
 
 =head2 find_in
