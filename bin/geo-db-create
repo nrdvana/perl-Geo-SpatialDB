@@ -1,0 +1,75 @@
+#! /usr/bin/env perl
+use strict;
+use warnings;
+use Log::Any '$log';
+use Log::Progress;
+use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 'consume' };
+use Cpanel::JSON::XS;
+use Try::Tiny;
+use Geo::SpatialDB;
+
+# ABSTRACT: Define the paramters for a new Geo DB
+# VERSION
+
+=head1 SYNOPSIS
+
+  geo-db-create [-l LAYER_JSON] ... PATH
+
+=head1 OPTIONS
+
+=over 16
+
+=item -l JSON
+
+=item --layer=JSON
+
+Specify a new layer's attributes as JSON (relaxed syntax).  This can be given multiple times.
+
+  '{
+
+=item --storage=JSON
+
+Specify the attributes for the storage as JSON (relaxed syntax).  If not given, the C<PATH>
+will be used with the module C<LMDB_Storable>.
+
+=item --size=SIZE
+
+Specify the maximum size of the database.  The default storage, LMDB_Storable, requires that
+you choose this value, and if not specified it will default to 3GB (or 1GB on 32-bit perl).
+
+=back
+
+=cut
+
+my @layers;
+
+sub pod2usage { require Pod::Usage; Pod::Usage::pod2usage(@_) }
+use Getopt::Long;
+GetOptions(
+	'layer|l=s'    => sub { push @layers, $_[1] },
+	'storage|s=s'  => \my $storage,
+	'size=s'       => \my $max_size,
+	'help'         => sub { pod2usage(1) },
+) or pod2usage(2);
+
+$_= Cpanel::JSON::XS->new->relaxed->decode($_)
+	for @layers, (defined $storage? $storage : ());
+
+$storage //= {};
+$storage->{mapsize}= $max_size if defined $max_size;
+$storage->{create}= 1;
+(defined $storage->{path}? 1 : 0) + @ARGV == 1
+	or pod2usage(-message => "You may only specify one PATH for storage");
+$storage->{path} //= shift;
+
+my $geo_db= Geo::SpatialDB->new(storage => $storage);
+try {
+	$geo_db->add_layer($_) for @layers;
+	$geo_db->storage->commit;
+}
+catch {
+	warn $_;
+	warn "Database was not successfully created.  You probably want to 'rm -r ".$storage->{path}."'\n";
+};
+
+# PODNAME: geo-db-create
