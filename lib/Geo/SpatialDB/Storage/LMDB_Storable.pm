@@ -39,7 +39,8 @@ filesystems.
 
 =head2 mapsize
 
-The maximum size of the database; default is 3GB.  (LMDB needs this parameter)
+The maximum size of the database; default is 4GB, or 1GB on 32-bit systems.
+(LMDB needs this parameter)
 
 =head2 maxdbs
 
@@ -57,7 +58,7 @@ the operation fails catastrophically.
 BEGIN { # so role sees it exists
 	has path      => ( is => 'ro', required => 1 );
 	has readonly  => ( is => 'ro', default => sub { 0 } );
-	has mapsize   => ( is => 'ro', default => sub { 0xC0000000 } );
+	has mapsize   => ( is => 'ro', default => sub { length(pack p => 0) == 8? 2**32 : 2**30 } );
 	has maxdbs    => ( is => 'ro', default => sub { 250 } );
 	has run_with_scissors => ( is => 'ro', default => sub { 0 } );
 
