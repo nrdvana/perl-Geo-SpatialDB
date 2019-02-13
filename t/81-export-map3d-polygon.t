@@ -1,6 +1,6 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
-use TestGeoDB ':all';
+use TestGeoDB -setup => ':all';
 use Geo::SpatialDB::Math qw/ polygon vector plane /;
 
 my @tests= (
@@ -40,7 +40,7 @@ for (@tests) {
 	$polygon= polygon(map vector(@$_), @$polygon);
 	my @planes= map plane(@{$_->[0]}, $_->[1]), @plane_and_refpt;
 	$polygon->clip_to_planes(@planes);
-	is_deeply( $polygon, $expected, $name );
+	is( $polygon, $expected, $name );
 }
 
 done_testing;

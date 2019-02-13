@@ -1,12 +1,10 @@
-use strict;
-use warnings;
-use Test::More;
 use FindBin;
+use lib "$FindBin::Bin/lib";
+use TestGeoDB -setup => ':all';
 use File::Spec::Functions;
 use File::Path 'remove_tree','make_path';
 use Log::Any::Adapter 'TAP';
-
-use_ok 'Geo::SpatialDB::Import::OpenStreetMap' or die;
+use Geo::SpatialDB::Import::OpenStreetMap;
 
 my $tmpdir= catdir($FindBin::RealBin, 'tmp', $FindBin::Script);
 remove_tree($tmpdir, { error => \my $ignored });

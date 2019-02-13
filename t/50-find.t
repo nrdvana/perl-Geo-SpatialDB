@@ -1,7 +1,6 @@
-use strict;
-use warnings;
-use Test::More;
 use FindBin;
+use lib "$FindBin::Bin/lib";
+use TestGeoDB -setup => ':all';
 use File::Spec::Functions;
 use File::Path 'remove_tree','make_path';
 use Log::Any::Adapter 'TAP';

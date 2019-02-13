@@ -1,9 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
-use TestGeoDB ':all';
+use TestGeoDB -setup => ':all';
 use Geo::SpatialDB::Math qw/ vector vector_latlon /;
-
-my $v0= new_ok( 'Geo::SpatialDB::Math::Vector', [ 0,0,0 ] );
 
 subtest ctor_read_write => sub {
 	my $v= vector(0,0);
@@ -11,7 +9,7 @@ subtest ctor_read_write => sub {
 	is( $v->s, undef, 's undefined' );
 	is( $v->t, undef, 't undefined' );
 	$v->x= 1;
-	is_deeply( [ $v->xyz ], [ 1,0,0 ], 'read xyz' );
+	is( [ $v->xyz ], [ 1,0,0 ], 'read xyz' );
 	is( $v->x, 1, 'assigned x' );
 	is( $v->s, undef, 's undefined' );
 	is( $v->t, undef, 't undefined' );
@@ -49,7 +47,7 @@ subtest cross => sub {
 	for (@tests) {
 		my ($vec_a, $vec_b, $expected)= @$_;
 		my $name= sprintf("(%.3f,%.3f,%.3f) X (%.3f,%.3f,%.3f)", @$vec_a, @$vec_b);
-		is_deeply( vector(@$vec_a)->cross($vec_b), $expected, $name );
+		is( vector(@$vec_a)->cross($vec_b), $expected, $name );
 	}
 	done_testing;
 };
@@ -81,7 +79,7 @@ subtest sort_heading => sub {
 	}
 	my @scrambled= ( $expected[0], reverse @expected[1..$#expected] );
 	my @sorted= vector(0,0,1)->sort_vectors_by_heading(@scrambled);
-	is_deeply( \@sorted, \@expected, 'sorted vectors' );
+	is( \@sorted, \@expected, 'sorted vectors' );
 	done_testing;
 };
 

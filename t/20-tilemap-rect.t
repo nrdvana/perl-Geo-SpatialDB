@@ -1,17 +1,14 @@
-#! /usr/bin/env perl
-use strict;
-use warnings;
-use Test::More;
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use TestGeoDB -setup => ':all';
 use Geo::SpatialDB::Math 'llbox';
-use_ok 'Geo::SpatialDB::TileMapper::Rect';
+use Geo::SpatialDB::TileMapper::Rect;
 
 # This config should cause exactly 9 tiles above equator, 9 below,
 # and 36 around the globe with a perfect seam at the meridian.
-my $tmap= new_ok 'Geo::SpatialDB::TileMapper::Rect', [ lat_divs => 18, lon_divs => 36 ],
-	'Rect tilemapper';
-
+my $tmap= Geo::SpatialDB::TileMapper::Rect->new( lat_divs => 18, lon_divs => 36 );
 my $clone= Geo::SpatialDB::TileMapper->coerce($tmap->get_ctor_args);
-is_deeply( $tmap->get_ctor_args, $clone->get_ctor_args, 'clones match' );
+is( $tmap->get_ctor_args, $clone->get_ctor_args, 'clones match' );
 
 my @tiles= (
 	#           lat0,lon0,  lat1,lon1
@@ -32,7 +29,7 @@ for my $test (@tiles) {
 	my ($key, $latlon)= @$test;
 	my ($lat0, $lon0, $lat1, $lon1)= @$latlon;
 	my $pts= $tmap->tile_polygon($key);
-	is_deeply( $pts, [ $lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1 ], "tile $key" );
+	is( $pts, [ $lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1 ], "tile $key" );
 }
 
 for my $test (@tiles) {
@@ -49,14 +46,13 @@ for my $test (@tiles) {
 }
 
 my $set= $tmap->tiles_in(llbox(-1,-1,1,1));
-is_deeply( [ sort { $a <=> $b } @$set ], [ 288, 323, 324, 359 ], 'select across equator meridian' );
+is( [ sort { $a <=> $b } @$set ], [ 288, 323, 324, 359 ], 'select across equator meridian' );
 $set= $tmap->tiles_in(llbox(-1,179,1,-179));
-is_deeply( [ sort { $a <=> $b } @$set ], [ 8*36+17, 8*36+18, 9*36+17, 9*36+18 ], 'select across equator antimeridian' );
+is( [ sort { $a <=> $b } @$set ], [ 8*36+17, 8*36+18, 9*36+17, 9*36+18 ], 'select across equator antimeridian' );
 
 if ($ENV{TEST_ALL_MICRODEGREES}) {
 	subtest all_microdegrees_across_antimeridian => sub {
-		my $tmap2= new_ok 'Geo::SpatialDB::TileMapper::Rect', [ lat_divs => 180_000, lon_divs => 360_000 ],
-			'Rect tile mapper millidegrees';
+		my $tmap2= Geo::SpatialDB::TileMapper::Rect->new( lat_divs => 180_000, lon_divs => 360_000 );
 		for my $lat_md (0..100_000) {
 			for my $lon_md (0..100_000) {
 				my ($lat, $lon)= (-.05 + ($lat_md/1_000_000), 179.95 + ($lon_md/1_000_000));

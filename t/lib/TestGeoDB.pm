@@ -6,16 +6,17 @@ use Exporter;
 use File::Spec::Functions;
 use Scalar::Util 'reftype';
 use File::Path 'remove_tree','make_path';
-use Log::Any::Adapter 'TAP';
 our @EXPORT_OK= qw( get_fresh_tmpdir tmpdir new_geodb_in_tmpdir new_geodb_in_memory is_within is_nearly );
 our %EXPORT_TAGS= ( all => \@EXPORT_OK );
 
 sub import {
 	my $caller= caller;
-	strict->import;
-	warnings->import;
-	eval 'package '.$caller.'; use Test::More; use Try::Tiny; use Log::Any q{$log}; 1'
-		or die $@;
+	my $setup;
+	@_= map { $_ eq '-setup'? do { ++$setup; () } : ($_) } @_;
+	if ($setup) {
+		eval 'package '.$caller.'; use Test2::V0; use Try::Tiny; use Log::Any::Adapter "TAP"; use Log::Any q{$log}; 1'
+			or die $@;
+	}
 	goto \&Exporter::import;
 }
 

@@ -1,6 +1,6 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
-use TestGeoDB ':all';
+use TestGeoDB -setup => ':all';
 use Geo::SpatialDB;
 use Geo::SpatialDB::Entity::RouteSegment;
 use Geo::SpatialDB::Export::MapPolygon3D;
@@ -114,7 +114,7 @@ sub test_clip_triangle_to_plane {
 		$plane= vector(@$plane);
 		try {
 			$triangle->clip_to_planes($plane);
-			is_deeply( [ $triangle->as_triangles ], \@expected, $name )
+			is( [ $triangle->as_triangles ], \@expected, $name )
 				or diag explain(\@expected), explain($triangle);
 		} catch {
 			diag $_;
