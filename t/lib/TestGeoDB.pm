@@ -14,6 +14,8 @@ sub import {
 	my $setup;
 	@_= map { $_ eq '-setup'? do { ++$setup; () } : ($_) } @_;
 	if ($setup) {
+		strict->import;
+		warnings->import;
 		eval 'package '.$caller.'; use Test2::V0; use Try::Tiny; use Log::Any::Adapter "TAP"; use Log::Any q{$log}; 1'
 			or die $@;
 	}

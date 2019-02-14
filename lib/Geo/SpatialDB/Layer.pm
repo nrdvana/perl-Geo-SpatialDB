@@ -79,7 +79,7 @@ layer.  This is not a well thought-out API, but whatever.
 =cut
 
 has code              => ( is => 'ro', required => 1 );
-has name              => ( is => 'rw', required => 1 );
+has name              => ( is => 'rw', required => 1, default => sub { $_[0]->code } );
 sub index_name           { 'layer.' . shift->code }
 has description       => ( is => 'rw' );
 has _mapper_arg       => ( is => 'rw', init_arg => 'mapper', required => 1 );
@@ -104,20 +104,6 @@ sub _build_type_filter_regex {
 	return undef unless @{ $self->type_filters || [] };
 	my $re= join '|', map { ref $_->{type}? $_->{type} : qr/\Q$_->{type}\E/ } @{ $self->type_filters };
 	return qr/$re/;
-}
-
-sub get_ctor_args {
-	my $self= shift;
-	my %data= %$self;
-	for (keys %data) {
-		delete $data{$_}
-			if $_ =~ /^[^a-z]/
-			or !defined $data{$_}
-			or (ref $data{$_} eq 'HASH' && !keys %{ $data{$_} });
-	}
-	ref $_ && ref($_)->can('get_ctor_args') && ($_= $_->get_ctor_args)
-		for values %data;
-	\%data;
 }
 
 sub includes_entity {
