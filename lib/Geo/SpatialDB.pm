@@ -244,12 +244,14 @@ sub _add_entity_to_layer {
 	my $index_name= $layer->index_name;
 	$self->storage->indexes->{$index_name} or $self->storage->create_index($index_name);
 	my $features= $e->features_at_resolution($layer->min_feature_size);
+	return 0 unless $features;
 	my %added_to_tile;
 	for my $feature (@$features) {
 		my $rad= $feature->radius;
 		next unless (!$layer->min_feature_size or $rad >= $layer->min_feature_size)
 		        and (!$layer->max_feature_size or $rad <= $layer->max_feature_size);
-		for my $tile_id (grep !$added_to_tile{$_}++, @{$layer->mapper->tiles_in($feature)}) {
+		my $tiles= $layer->mapper->tiles_in($feature);
+		for my $tile_id (grep !$added_to_tile{$_}++, @$tiles) {
 			my $bucket= $stor->get($index_name, $tile_id) // {};
 			my $ents= ($bucket->{ent} //= []);
 			my %seen= map { $_ => 1 } @$ents;

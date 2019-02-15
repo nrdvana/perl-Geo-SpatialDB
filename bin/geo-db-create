@@ -4,7 +4,7 @@ use warnings;
 use Log::Any '$log';
 use Log::Progress;
 use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 'consume' };
-use Cpanel::JSON::XS;
+use JSON::MaybeXS;
 use Try::Tiny;
 use Geo::SpatialDB;
 
@@ -25,7 +25,7 @@ use Geo::SpatialDB;
 
 Specify a new layer's attributes as JSON (relaxed syntax).  This can be given multiple times.
 
-  '{
+  '{code:"roads",mapper:{CLASS:"Rect",lat_divs:18000,lon_divs:36000}}'
 
 =item --storage=JSON
 
@@ -52,7 +52,7 @@ GetOptions(
 	'help'         => sub { pod2usage(1) },
 ) or pod2usage(2);
 
-$_= Cpanel::JSON::XS->new->relaxed->decode($_)
+$_= JSON->new->relaxed->decode($_)
 	for @layers, (defined $storage? $storage : ());
 
 $storage //= {};
