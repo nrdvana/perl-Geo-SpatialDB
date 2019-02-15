@@ -1,6 +1,7 @@
 package Geo::SpatialDB::Layer;
 use Moo 2;
 use Geo::SpatialDB::TileMapper;
+with 'Geo::SpatialDB::Serializable';
 
 # ABSTRACT: Holds parameters for how to index a subset of entities in the database
 # VERSION

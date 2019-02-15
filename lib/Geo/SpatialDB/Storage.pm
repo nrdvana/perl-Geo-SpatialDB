@@ -229,4 +229,6 @@ sub _save_config {
 		or croak "Can't write storage config '$fname': $!";
 }
 
+sub TO_JSON { shift->get_ctor_args }
+
 1;

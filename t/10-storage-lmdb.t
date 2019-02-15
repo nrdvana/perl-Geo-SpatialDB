@@ -25,6 +25,21 @@ subtest test_lmdb_storage => sub {
 	done_testing;
 };
 
+# Verify that LMDB_Storable recorded the index we created
+subtest test_lmdb_savestate => sub {
+	my $s= Geo::SpatialDB::Storage::LMDB_Storable::coerce(path => $tmpdir);
+	ok( !$s->_written, 'opening should not set _written flag' );
+	is( $s->mapsize, 1024*1024, 'mapsize preserved' );
+	my $i= $s->iterator('INFORMATION_SCHEMA');
+	my ($k, $v)= $i->();
+	is( $k, 'indexes', 'indexes stored' );
+	my $expected_indexes= { INFORMATION_SCHEMA => { name => 'INFORMATION_SCHEMA' }, x => { name => 'x' } };
+	is( $v, $expected_indexes, 'indexes have correct value' );
+	is( $s->indexes, $expected_indexes, 'indexes loaded into attribute' );
+	ok( !$s->_written, 'still un-written after iterating data' );
+	done_testing;
+};
+
 sub test_storage {
 	my $store= shift;
 	$store->create_index('x');

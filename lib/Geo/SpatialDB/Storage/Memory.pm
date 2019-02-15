@@ -26,6 +26,18 @@ BEGIN {
 
 =head1 METHODS
 
+=head2 create_index
+
+  $stor->create_index($name);
+
+Create a new named index
+
+=head2 drop_index
+
+  $stor->drop_index($name);
+
+Remove an existing named index
+
 =cut
 
 sub create_index {

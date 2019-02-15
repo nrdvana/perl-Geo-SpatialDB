@@ -39,7 +39,7 @@ sub coerce {
 	# Else if it is a hashref with CLASS member, translate CLASS and construct it
 	if (ref $thing eq 'HASH' and $thing->{CLASS}) {
 		my %args= %$thing;
-		return _load_class($class, delete $args{CLASS})->new(\%args);
+		return $class->_load_class(delete $args{CLASS})->new(\%args);
 	}
 	# Else if class can 'new', just try it
 	return $class->new($thing) if $class->can('new');
@@ -47,7 +47,7 @@ sub coerce {
 }
 
 sub get_ctor_args {
-	my $self= shift;
+	my ($class, $self)= @_ == 2? @_ : ('Geo::SpatialDB::Serializable', $_[0]);
 	my %data= %$self;
 	for (keys %data) {
 		delete $data{$_}
@@ -56,20 +56,24 @@ sub get_ctor_args {
 			or (ref $data{$_} eq 'ARRAY' && !@{ $data{$_} })
 			or (ref $data{$_} eq 'HASH' && !keys %{ $data{$_} });
 	}
-	ref $_ && ref($_)->can('get_ctor_args') && ($_= $_->get_ctor_args)
+	my $bc;
+	# For each field which is also a class having ->get_ctor_args, replace it with the arguments.
+	# If the current object has an implied class for that field, (denoted with _${field}_base_class)
+	# then run get_ctor_args on that class (to potentially remove the need for the ->{CLASS} field).
+	ref $_ && ref($_)->can('get_ctor_args') && ($_= (($bc=$self->can('_'.$_.'_base_class'))? $self->$bc->get_ctor_args($_) : $_->get_ctor_args($_)))
 		for values %data;
-	$data{CLASS}= $self->can('CLASSNAME_ROOT')?
-		_remove_class_prefix($self->CLASSNAME_ROOT, ref $self) : ref $self;
+	$data{CLASS}= _remove_class_prefix($class, ref $self)
+		if $class ne ref $self;
 	\%data;
 }
 
 sub TO_JSON { shift->get_ctor_args }
 
 sub _remove_class_prefix {
-	my ($root_class, $name)= @_;
-	return substr($name, length($root_class)+2)
-		if substr($name, 0, length($root_class)+2) eq $root_class.'::';
-	return '+'.$name;
+	my ($class, $subclass)= @_;
+	return substr($subclass, length($class)+2)
+		if defined $class && substr($subclass, 0, length($class)+2) eq $class.'::';
+	return $subclass;
 }
 
 sub _load_class {
@@ -81,5 +85,9 @@ sub _load_class {
 	return $name if eval { Module::Runtime::require_module($name); 1 };
 	Carp::croak("Can't load/find module $name or $with_prefix");
 }
+
+#sub STORABLE_freeze {
+#	croak ref($_[0])." Should not be seralized directly";
+#}
 
 1;

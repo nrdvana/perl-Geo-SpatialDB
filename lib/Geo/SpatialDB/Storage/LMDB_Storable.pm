@@ -91,7 +91,7 @@ sub get_ctor_args {
 	return {
 		CLASS => ref($self),
 		map { $_ => $self->$_ }
-		qw( readonly mapsize run_with_scissors )
+		qw( readonly mapsize run_with_scissors maxdbs )
 	}
 }
 
@@ -159,9 +159,10 @@ sub create_index {
 	$flags{name}= $name;
 	my $flags= $self->_index_flags_to_mdb_flags(\%flags) + MDB_CREATE;
 	my $indexes= $self->{indexes}= $self->_build_indexes; # get a fresh copy, for safety
-	defined $self->indexes->{$name} and croak "Index $name already exists";
+	defined $indexes->{$name} and croak "Index $name already exists";
 	my $db= $self->_txn->OpenDB($name, $flags);
 	$self->_dbs->{$name}= $db;
+	$indexes->{$name}= \%flags;
 	$self->_save_indexes;
 }
 
@@ -203,7 +204,7 @@ Get the value of a key, or undef if the key doesn't exist.  Dies if the index do
 sub get {
 	my ($self, $dbname, $key)= @_;
 	my $db= $self->{_dbs}{$dbname} //= $self->_open_db_with_same_flags($dbname);
-	my $v= (defined $self->{_written} && exists $self->{_written}{$dbname}{$key})?
+	my $v= (defined $self->{_written} && defined $self->{_written}{$dbname} && exists $self->{_written}{$dbname}{$key})?
 		$self->{_written}{$dbname}{$key} : $db->get($key);
 	return (!defined $v? $v : substr($v,0,1)? thaw(substr($v,1)) : substr($v,1));
 }
@@ -342,7 +343,7 @@ sub iterator {
 			croak $LMDB_File::last_err
 		}
 		# Check for lazy-writes.
-		if (defined $self && $self->{_written} && exists $self->{_written}{$dbname}{$key}) {
+		if (defined $self && defined $self->{_written} && defined $self->{_written}{$dbname} && exists $self->{_written}{$dbname}{$key}) {
 			$data= $self->{_written}{$dbname}{$key};
 			goto again unless defined $data;
 		}

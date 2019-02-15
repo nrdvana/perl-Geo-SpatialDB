@@ -1,7 +1,7 @@
 use FindBin;
 use lib "$FindBin::Bin/lib";
 use TestGeoDB -setup => ':all';
-use Geo::SpatialDB::Math 'llbox';
+use Geo::SpatialDB::Math 'llbox', 'llrad';
 use Geo::SpatialDB::TileMapper::Rect;
 
 # This config should cause exactly 9 tiles above equator, 9 below,

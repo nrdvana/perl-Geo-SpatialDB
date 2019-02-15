@@ -155,7 +155,7 @@ sub _build_layers {
 	my $i= $self->storage->iterator('layer');
 	my %layers;
 	while (my ($k, $v)= $i->()) {
-		$layers{$k}= $v;
+		$layers{$k}= Geo::SpatialDB::Layer->coerce($v);
 	}
 	return \%layers;
 }
@@ -164,7 +164,7 @@ sub _save_layers {
 	my $self= shift;
 	$self->storage->create_index('layer')
 		unless $self->storage->indexes->{layer};
-	$self->storage->put('layer', $_->code => $_) for $self->layer_list;
+	$self->storage->put('layer', $_->code => Geo::SpatialDB::Layer->get_ctor_args($_)) for $self->layer_list;
 }
 
 =head1 METHODS
@@ -212,7 +212,7 @@ sub add_layer {
 	my $iter= $self->storage->iterator('entity');
 	my $added= 0;
 	while (my ($k, $v)= $iter->()) {
-		++$added if $self->_add_entity_to_layer($layer, $v);
+		++$added if $self->_add_entity_to_layer($layer, Geo::SpatialDB::Entity->coerce($v));
 	}
 	return $added;
 }
@@ -229,7 +229,8 @@ Add one entity to the database, indexing it within any appropriate layers.
 sub add_entity {
 	my ($self, $e)= @_;
 	my %added;
-	$self->storage->put(entity => $e->id, $e);
+	$e->storage($self->storage) if $e->can('storage');
+	$self->storage->put(entity => $e->id, Geo::SpatialDB::Entity->get_ctor_args($e));
 	for my $layer ($self->layer_list) {
 		my $added_to_tile= $self->_add_entity_to_layer($layer, $e);
 		$added{$layer->code} += $added_to_tile if $added_to_tile;
@@ -296,7 +297,7 @@ sub find_in {
 			my $bucket= $stor->get($index_name, $tile_id)
 				or next;
 			for (@{ $bucket->{ent} || [] }) {
-				$result{entities}{$_} ||= $self->storage->get(entity => $_);
+				$result{entities}{$_} ||= Geo::SpatialDB::Entity->coerce($self->storage->get(entity => $_));
 			}
 		}
 	}
