@@ -36,12 +36,12 @@ sub latlon_rad_to_range {
 }
 
 sub latlon_to_xyz {
-	return spherical_to_cartesian( 1, $_[0] * pi/180, (90 - $_[1]) * pi/180 );
+	return spherical_to_cartesian( 1, $_[1] * pi/180, (90 - $_[0]) * pi/180 );
 }
 
 sub latlon_to_earth_xyz {
 	# TODO: handle the oblate spheroid thing
-	return spherical_to_cartesian( earth_radius, $_[0] * pi/180, (90 - $_[1]) * pi/180 );
+	return spherical_to_cartesian( earth_radius, $_[1] * pi/180, (90 - $_[0]) * pi/180 );
 }
 
 sub llrad { Geo::SpatialDB::Math::LLRad->new(@_) }

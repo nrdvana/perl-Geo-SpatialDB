@@ -26,6 +26,8 @@ Number of longitude divisions (out of 360 degrees)
 has lat_divs   => ( is => 'ro', required => 1 );
 has lon_divs   => ( is => 'ro', required => 1 );
 
+sub tile_count { return $_[0]->lat_divs * $_[0]->lon_divs }
+
 =head1 METHODS
 
 See L<TileMapper|Geo::SpatialDB::TileMapper> for:
