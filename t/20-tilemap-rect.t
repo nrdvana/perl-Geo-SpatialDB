@@ -14,7 +14,7 @@ my @tiles= (
 	#           lat0,lon0,  lat1,lon1
 	[    0 => [   80,   0,   90,  10  ]],
 	[    1 => [   80,  10,   90,  20  ]],
-	[   17 => [   80, 170,   90,-180  ]],
+	[   17 => [   80, 170,   90, 180  ]],
 	[   18 => [   80,-180,   90,-170  ]],
 	[   35 => [   80, -10,   90,   0  ]],
 	[   36 => [   70,   0,   80,  10  ]],
@@ -40,7 +40,7 @@ for my $test (@tiles) {
 	is( $tmap->tile_at( $lat0+0.000001, $lon1-0.000001   ), $key, "inside bottom right of tile $key" );
 	is( $tmap->tile_at( $lat1-0.000001, $lon1-0.000001   ), $key, "inside top right of tile $key" );
 	is( $tmap->tile_at( $lat0+0.000001, $lon0+0.000001   ), $key, "inside bottom left of tile $key" );
-	isnt( $tmap->tile_at( $lat1, $lon1 ), $key, "bottom-left goes to new tile" );
+	isnt( $tmap->tile_at( $lat1, $lon1 ), $key, "top-right goes to new tile" );
 	is( $tmap->tile_at( $lat1, $lon0+360 ), $key, "wrap lon+360 tile $key" );
 	is( $tmap->tile_at( $lat1, $lon0-360 ), $key, "wrap lon-360 tile $key" );
 }

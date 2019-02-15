@@ -17,6 +17,7 @@ our %EXPORT_TAGS= ( 'all' => \@EXPORT_OK );
 # VERSION
 
 use constant earth_radius => 6_371_640;
+use constant meters_per_degree => earth_radius * pi * 2 / 360;
 
 our $gd;
 sub latlon_distance { ($gd //= GIS::Distance->new)->distance(@_)->meters }
@@ -24,8 +25,8 @@ sub latlon_distance { ($gd //= GIS::Distance->new)->distance(@_)->meters }
 sub latlon_rad_to_dlat_dlon {
 	my ($lat, $lon, $radius)= @_;
 	return (
-		$radius / 111000, # Latitude degrees are 111000m apart
-		$radius / (111699 * cos($lat * pi/180)) # Longitude is affected by latitude
+		$radius / meters_per_degree, # Latitude degrees are 111000m apart
+		$radius / (meters_per_degree * abs(cos($lat * pi/180))) # Longitude is affected by latitude
 	);
 }
 
@@ -40,7 +41,7 @@ sub latlon_to_xyz {
 
 sub latlon_to_earth_xyz {
 	# TODO: handle the oblate spheroid thing
-	return spherical_to_cartesian( 6_371_640, $_[0] * pi/180, (90 - $_[1]) * pi/180 );
+	return spherical_to_cartesian( earth_radius, $_[0] * pi/180, (90 - $_[1]) * pi/180 );
 }
 
 sub llrad { Geo::SpatialDB::Math::LLRad->new(@_) }

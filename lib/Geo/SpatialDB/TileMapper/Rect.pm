@@ -73,6 +73,8 @@ sub _tiles_in_range {
 	# need to wrap
 	$lon_idx1+= $lon_divs if $lon_idx1 < $lon_idx0;
 	my @ids;
+	Carp::croak("excessive number of tiles found ($lat0,$lon0,$lat1,$lon1) => ".($lat_idx0 - $lat_idx1)." * ".($lon_idx1 - $lon_idx0)." = ".(($lat_idx0 - $lat_idx1)*($lon_idx1 - $lon_idx0)))
+		if ($lat_idx0 - $lat_idx1) * ($lon_idx1 - $lon_idx0) > 4000;
 	for my $lat ($lat_idx1 .. $lat_idx0) {
 		for my $lon ($lon_idx0 .. $lon_idx1) {
 			push @ids, $lat * $lon_divs + ($lon % $lon_divs);
@@ -97,8 +99,7 @@ sub tile_polygon {
 	my $lon0= $lon_idx/$lon_divs*360;
 	my $lat0= 90 - ($lat_idx+1)/$lat_divs*180;
 	my $lon1= ($lon_idx+1)/$lon_divs*360;
-	$lon0 -= 360 if $lon0 >= 180;
-	$lon1 -= 360 if $lon1 >= 180;
+	$lon0 -= 360, $lon1 -= 360 if $lon0 >= 180;
 	return [$lat1,$lon0,  $lat0,$lon0,  $lat0,$lon1,  $lat1,$lon1];
 }
 

@@ -19,6 +19,7 @@ expensive calculations.
 
 sub new {
 	my $class= shift;
+	@_ == 3 or Carp::croak("Expected 3 arguments to LLRad");
 	bless [ @_ ], $class;
 }
 

@@ -15,10 +15,22 @@ This class has mostly the same API as LLRad, and can be used interchangably with
 places in the Geo::SpatialDB API, allowing you to use the notation that causes the least
 expensive calculations.
 
+=head1 ATTRIBUTES
+
+=head1 METHODS
+
+=head2 new
+
+  LLBox->new( $lat0, $lon0, $lat1, $lon1 );
+  
+  # where $lat0 < $lat1 and $lon0 < $lon1
+  # in other words, from lower left to upper right
+
 =cut
 
 sub new {
 	my ($class, $lat0, $lon0, $lat1, $lon1)= @_;
+	@_ == 5 or Carp::croak("Expected 4 arguments to LLBox");
 	bless [ $lat0, $lon0, $lat1, $lon1 ], $class;
 }
 
