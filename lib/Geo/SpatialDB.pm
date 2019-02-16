@@ -306,4 +306,18 @@ sub find_in {
 	\%result;
 }
 
+=head2 get_entity
+
+  my $ent= $geo_db->get_entity($id);
+
+Return an entity by its ID.  This does any extra work of inflating the object that the
+L</storage> might not do on its own.  This also might return a cached instance of the entity.
+
+=cut
+
+sub get_entity {
+	my ($self, $ent_id)= @_;
+	Geo::SpatialDB::Entity->coerce($self->storage->get(entity => $ent_id));
+}
+
 1;

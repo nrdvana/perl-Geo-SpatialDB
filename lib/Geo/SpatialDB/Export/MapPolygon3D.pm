@@ -30,7 +30,7 @@ Galapagos west of Brazil is cartesian (0,-1,0).  (0,0) near the Gulf of Guinea i
 
 =head1 ATTRIBUTES
 
-=head2 spatial_db
+=head2 geo_db
 
 Reference to a Geo::SpatialDB from which the rendered entities came.
 
@@ -40,7 +40,7 @@ The width of one lane of road, in meters.
 
 =cut
 
-has spatial_db     => is => 'rw', required => 1;
+has geo_db         => is => 'rw', required => 1;
 has surface_radius => is => 'rw', default => sub { earth_radius }; # meters
 has lane_width     => is => 'rw', default => sub { 3 }; # meters
 
@@ -58,7 +58,7 @@ for the road vertices.
 
 sub calc_road_width {
 	my ($self, $route_segment)= @_;
-	$route_segment->lanes * $self->lane_width / $self->surface_radius;
+	($route_segment->lanes // 1) * $self->lane_width / $self->surface_radius;
 }
 
 =head2 generate_route_lines

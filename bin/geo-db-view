@@ -1,0 +1,225 @@
+#! /usr/bin/env perl
+use strict;
+use warnings;
+BEGIN {
+	eval { require OpenGL::Sandbox; require OpenGL::Sandbox::V1::FTGLFont; 1; }
+		or die <<END
+This viewer requires the following modules:
+  OpenGL (or OpenGL::Modern), OpenGL::Sandbox, OpenGL::Sandbox::V1::FTGLFont
+It also benefits from:
+  OpenGL::GLFW
+END
+
+}
+use FindBin;
+use Log::Any '$log';
+use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 'consume' };
+use File::ShareDir 'dist_dir';
+use Math::Trig 'deg2rad';
+use Try::Tiny;
+use OpenGL::Sandbox qw( $res make_context next_frame -V1 setcolor scale plot_xyz plot_st_xyz setup_projection font GL_POLYGON GL_LINE_LOOP compile_list glClearColor rotate trans load_identity GL_LINE_STRIP GL_TEXTURE_2D glEnable glDisable ),
+	-resources => { path => do { -d "$FindBin::Bin/../.git"? "$FindBin::Bin/../share" : dist_dir('Geo-SpatialDB') } };
+use Geo::SpatialDB;
+use Geo::SpatialDB::Math 'llrad','latlon_to_xyz';
+use Geo::SpatialDB::Export::MapPolygon3D;
+
+=head1 USAGE
+
+  geo-db-view [OPTIONS] GEODB_PATH
+
+=head1 OPTIONS
+
+=over
+
+=item --db=PATH
+
+Specify path to Geo DB
+
+=item --start=LAT,LON
+
+Specify initial coordinates of viewer
+
+=back
+
+=cut
+
+sub pod2usage { require Pod::Usage; goto &Pod::Usage::pod2usage; }
+use Getopt::Long;
+GetOptions(
+	'db=s'    => \my $opt_db_path,
+	'start=s' => \my $opt_start,
+	'help|?'  => sub { pod2usage(1) },
+) or pod2usage(2);
+
+$opt_db_path //= shift;
+defined $opt_db_path or pod2usage(-message => 'Must specify database path');
+
+my $geo_db= Geo::SpatialDB->new(storage => $opt_db_path);
+my $export= Geo::SpatialDB::Export::MapPolygon3D->new(geo_db => $geo_db);
+my $latlon= $opt_start? parse_latlon($opt_start) : find_viewer_start($geo_db);
+my $view= WorldView->new(latlon => $latlon);
+
+make_context;
+setup_projection(top => 1, bottom => -1, near => 1, z => 2, far => 1000);
+glClearColor(.5,.5,.5,1);
+my %layer_tile_cache;
+my $start_t= int(time);
+my $n= 0;
+my $zoom= 1;
+while (1) {
+	$view->enter_cs;
+	$view->radius( $view->radius * .99 + 1000 * .01 );
+	render_globe() if $view->radius > 100000;
+	for my $layer ($geo_db->layer_list) {
+		try {
+			render_tile($layer, $_) for @{ $layer->mapper->tiles_in($view->area) };
+		};
+	}
+	next_frame;
+	++$n;
+	if (int(time) != $start_t) { print "$n fps\n"; $n= 0; ++$start_t; }
+}
+
+sub parse_latlon {
+	my $latlon= [ split ',', shift ];
+	$_ =~ /^[-0-9]+\.[0-9]+$/ or die "Invalid lat,lon coordinate: $_"
+		for @$latlon;
+	$latlon;
+}
+
+sub find_viewer_start {
+	my $db= shift;
+	# Get any bucket from the database
+	my $polygon;
+	for my $layer ($db->layer_list) {
+		my $i= $db->storage->iterator($layer->index_name);
+		if (my $tile_id= $i->()) {
+			$polygon= $layer->mapper->tile_polygon($tile_id);
+			last;
+		}
+	}
+	die "Can't find any map data in any layer?" unless $polygon;
+	my $center= [0,0];
+	$center->[$_&1] += $polygon->[$_] for 0..$#$polygon;
+	$center->[0] /= @$polygon/2, $center->[1] /= @$polygon/2;
+	$log->info("Starting with coordinates $center->[0],$center->[1]");
+	return $center;
+}
+
+BEGIN {
+	package WorldView;
+	use Moo 2;
+	use OpenGL::Sandbox qw( -V1 rotate scale trans );
+	use Geo::SpatialDB::Math 'earth_radius', 'llrad';
+	has latlon  => ( is => 'rw', default => sub { [0,0] } ); # camera position [$lat,$lon]
+	has heading => ( is => 'rw', default => sub {    0  } ); # angle from north
+	has pitch   => ( is => 'rw', default => sub {  -90  } ); # 0 (level) to -90 (straight down)
+	has radius  => ( is => 'rw', default => \&earth_radius ); # Viewing radius, in meters
+
+	sub enter_cs {
+		my $self= shift;
+		# un-do the vertical viewing angle
+		rotate x => 90 + $self->pitch;
+		# un-do the heading
+		rotate z => $self->heading;
+		# scale out to view the requested radius
+		scale earth_radius / $self->radius;
+		# translate to center of unit-sphere earth
+		trans 0,0,-1;
+		rotate x => -90; # World coordinates have +Z as north pole, so OpenGL would be looking at north
+		rotate z => -90; # pole by default, but want to start from prime meridian & equator (0,0)
+		# un-rotate from the lat,lon of the camera
+		rotate y => $self->latlon->[0];
+		rotate z => -$self->latlon->[1];
+		# Now, the OpenGL coordinate system will render everything relative to the unit-sphere
+		# coordinates of the Geo::SpatialDB
+	}
+	sub area {
+		my $self= shift;
+		return llrad(@{ $self->latlon }, $self->radius);
+	}
+}
+
+sub render_tile {
+	my ($layer, $tile_id)= @_;
+	my $t= $layer_tile_cache{$layer->code}{$tile_id} //= build_tile_cache($layer, $tile_id);
+	return unless $t;
+	#print "Render tile $tile->{id}\n";
+	$t->{dlist}->call;
+}
+
+sub build_tile_cache {
+	my ($layer, $tile_id)= @_;
+	my $id= $layer->code.'-'.$tile_id;
+	print "Build cache for layer ".$layer->code." tile $tile_id\n";
+	my $tile= $geo_db->storage->get($layer->index_name, $tile_id) or return 0;
+	$tile->{ent} && @{ $tile->{ent} }
+		or do { warn "Tile $id is empty?"; return 0; };
+	my %entities= map +($_ => $geo_db->get_entity($_)), @{ $tile->{ent} };
+	$res->tex('road-2lane')->bind;
+	$res->tex('intersection-2lane')->bind;
+	my $ent_polygons= $export->generate_route_polygons({ entities => \%entities });
+	my $dlist= compile_list {
+		my @pts= @{$layer->mapper->tile_polygon($tile_id)};
+		#printf( ('%.3f,' x 8). "\n", @pts );
+		setcolor(0,1,1,.5);
+		plot_xyz(GL_POLYGON,
+			map latlon_to_xyz($pts[$_*2], $pts[$_*2+1]), 0..(@pts/2)-1
+		);
+		setcolor(0,0,0,1);
+		plot_xyz(GL_LINE_LOOP,
+			map latlon_to_xyz($pts[$_*2], $pts[$_*2+1]), 0..(@pts/2)-1
+		);
+		glEnable(GL_TEXTURE_2D);
+		for my $e (@$ent_polygons) {
+			if ($e->{entity}) {
+				$res->tex('road-2lane')->bind;
+				plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_) for $e->{polygons}->@*;
+			} else {
+				$res->tex('intersection-2lane')->bind;
+			#glDisable(GL_TEXTURE_2D);
+			#setcolor '#22FF00';
+				plot_st_xyz(GL_POLYGON, map +($_->st, $_->xyz), @$_) for $e->{polygons}->@*;
+			#glEnable(GL_TEXTURE_2D);
+			#for @{ $_->{polygons} };
+			}
+			#for my $p (@{$e->{polygons}}) {
+			#	# If polygon has > 3 vertices, iterate from 2..MAX making triangles
+			#	my @first= @{$p->[0]}[3,4,0,1,2];
+			#	plot_st_xyz(GL_TRIANGLES,
+			#		map { @first, @{$p->[$_-1]}[3,4,0,1,2], @{$p->[$_]}[3,4,0,1,2] } 2..$#$p
+			#	);
+			#}
+		}
+		glDisable(GL_TEXTURE_2D);
+	};
+	#my $data= $export->pack_polygons($ent_polygons, 'tx_st_xyz');
+	#my $vbuf= new_buffer($id, target => GL_ARRAY_BUFFER, autoload => $data);
+	#my $vao= new_vao($id, attributes => [
+	#	{ name => 'tx_id', buffer => $vbuf, size => 1, type => GL_INT,   stride => 24, pointer =>  0 },
+	#	{ name => 'tx_st', buffer => $vbuf, size => 2, type => GL_FLOAT, stride => 24, pointer =>  4 },
+	#	{ name => 'pos',   buffer => $vbuf, size => 3, type => GL_FLOAT, stride => 24, pointer => 12 },
+	#]);
+	return { id => $id, vao => undef, dlist => $dlist };
+}
+
+my $globe_dlist;
+sub render_globe {
+	$globe_dlist //= OpenGL::Sandbox::V1::DisplayList->new;
+	$globe_dlist->call(sub {
+		for my $lon (1..360) {
+			setcolor $lon/360, 1-($lon/360), 0;
+			plot_xyz(GL_LINE_STRIP,
+				map latlon_to_xyz($_,$lon), -90 .. 90
+			);
+		}
+	});
+	setcolor(0,0,1,1);
+	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(@{$view->latlon}));
+	setcolor(0,1,1,1);
+	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(90,0));
+	setcolor(1,1,1,1);
+	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(0,90));
+	setcolor(1,.5,1,1);
+	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(0,180));
+}

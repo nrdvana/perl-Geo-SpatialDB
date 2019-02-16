@@ -21,6 +21,10 @@ Number of divisions of latitude (out of 180 degrees)
 
 Number of longitude divisions (out of 360 degrees)
 
+=head2 tile_count
+
+Total number of tiles in the globe.
+
 =cut
 
 has lat_divs   => ( is => 'ro', required => 1 );
