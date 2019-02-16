@@ -9,7 +9,7 @@ This viewer requires the following modules:
 It also benefits from:
   OpenGL::GLFW
 END
-
+	
 }
 use FindBin;
 use Log::Any '$log';
@@ -17,7 +17,11 @@ use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 'consume' };
 use File::ShareDir 'dist_dir';
 use Math::Trig 'deg2rad';
 use Try::Tiny;
-use OpenGL::Sandbox qw( $res make_context next_frame -V1 setcolor scale plot_xyz plot_st_xyz setup_projection font GL_POLYGON GL_LINE_LOOP compile_list glClearColor rotate trans load_identity GL_LINE_STRIP GL_TEXTURE_2D glEnable glDisable ),
+use OpenGL::Sandbox qw( $res make_context next_frame -V1 setcolor scale plot_xyz plot_st_xyz
+	setup_projection font glBlendFunc compile_list glClearColor rotate trans load_identity
+	glEnable glDisable GL_POLYGON GL_LINE_LOOP GL_LINE_STRIP GL_TEXTURE_2D GL_QUAD_STRIP
+	GL_TRIANGLE_FAN GL_DEPTH_TEST GL_QUADS GL_BLEND GL_CULL_FACE GL_ONE GL_SRC_ALPHA
+	GL_ONE_MINUS_SRC_ALPHA ),
 	-resources => { path => do { -d "$FindBin::Bin/../.git"? "$FindBin::Bin/../share" : dist_dir('Geo-SpatialDB') } };
 use Geo::SpatialDB;
 use Geo::SpatialDB::Math 'llrad','latlon_to_xyz';
@@ -60,6 +64,9 @@ my $latlon= $opt_start? parse_latlon($opt_start) : find_viewer_start($geo_db);
 my $view= WorldView->new(latlon => $latlon);
 
 make_context;
+glEnable(GL_DEPTH_TEST);
+glEnable(GL_BLEND);
+glEnable(GL_CULL_FACE);
 setup_projection(top => 1, bottom => -1, near => 1, z => 2, far => 1000);
 glClearColor(.5,.5,.5,1);
 my %layer_tile_cache;
@@ -68,8 +75,9 @@ my $n= 0;
 my $zoom= 1;
 while (1) {
 	$view->enter_cs;
-	$view->radius( $view->radius * .99 + 1000 * .01 );
+	$view->radius( $view->radius * .999 + 1000 * .001 );
 	render_globe() if $view->radius > 100000;
+	render_globe_panel(@{$view->latlon});# if $view->radius < 800000;
 	for my $layer ($geo_db->layer_list) {
 		try {
 			render_tile($layer, $_) for @{ $layer->mapper->tiles_in($view->area) };
@@ -160,16 +168,18 @@ sub build_tile_cache {
 	$res->tex('intersection-2lane')->bind;
 	my $ent_polygons= $export->generate_route_polygons({ entities => \%entities });
 	my $dlist= compile_list {
-		my @pts= @{$layer->mapper->tile_polygon($tile_id)};
-		#printf( ('%.3f,' x 8). "\n", @pts );
-		setcolor(0,1,1,.5);
-		plot_xyz(GL_POLYGON,
-			map latlon_to_xyz($pts[$_*2], $pts[$_*2+1]), 0..(@pts/2)-1
-		);
-		setcolor(0,0,0,1);
-		plot_xyz(GL_LINE_LOOP,
-			map latlon_to_xyz($pts[$_*2], $pts[$_*2+1]), 0..(@pts/2)-1
-		);
+		# Plot the tile polygon first, semi-transparent
+		my @latlon= @{$layer->mapper->tile_polygon($tile_id)};
+		my @xyz= map latlon_to_xyz($latlon[$_*2], $latlon[$_*2+1]), 0..(@latlon/2)-1;
+		glEnable(GL_BLEND);
+		glDisable(GL_TEXTURE_2D);
+		glBlendFunc(GL_ONE, GL_ONE);
+		setcolor '#002222';
+		plot_xyz(GL_POLYGON, @xyz);
+		setcolor '#005555';
+		plot_xyz(GL_LINE_LOOP, @xyz);
+		
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glEnable(GL_TEXTURE_2D);
 		for my $e (@$ent_polygons) {
 			if ($e->{entity}) {
@@ -191,7 +201,6 @@ sub build_tile_cache {
 			#	);
 			#}
 		}
-		glDisable(GL_TEXTURE_2D);
 	};
 	#my $data= $export->pack_polygons($ent_polygons, 'tx_st_xyz');
 	#my $vbuf= new_buffer($id, target => GL_ARRAY_BUFFER, autoload => $data);
@@ -207,19 +216,48 @@ my $globe_dlist;
 sub render_globe {
 	$globe_dlist //= OpenGL::Sandbox::V1::DisplayList->new;
 	$globe_dlist->call(sub {
-		for my $lon (1..360) {
-			setcolor $lon/360, 1-($lon/360), 0;
-			plot_xyz(GL_LINE_STRIP,
-				map latlon_to_xyz($_,$lon), -90 .. 90
+		glDisable(GL_TEXTURE_2D);
+		glDisable(GL_CULL_FACE);
+		for (my $lon= 0; $lon < 360; $lon += 15) {
+			setcolor $lon%45? '#44DD44' : '#66FF66';
+			my $width_2= $lon%90? .2 : .4;
+			plot_xyz(GL_QUAD_STRIP,
+				map { latlon_to_xyz($_,$lon-$width_2), latlon_to_xyz($_,$lon+$width_2) } -90 .. 90
 			);
 		}
+		for (my $lat= -85; $lat < 90; $lat += 15) {
+			setcolor $lat%45? '#44DD44' : '#66FF66';
+			my $width_2= $lat%90? .2 : .4;
+			plot_xyz(GL_QUAD_STRIP,
+				map { latlon_to_xyz($lat-$width_2, $_*2), latlon_to_xyz($lat+$width_2, $_*2) } 0 .. 180
+			);
+		}
+		setcolor '#FF0000';
+		plot_xyz(GL_TRIANGLE_FAN,
+			(0,0,.8), (.1,.1,0), (.1,-.1,0), (-.1,-.1,0), (-.1,.1,0), (.1,.1,0)
+		);
+		setcolor '#999999';
+		plot_xyz(GL_TRIANGLE_FAN,
+			(0,0,-.8), (.1,.1,0), (-.1,.1,0), (-.1,-.1,0), (.1,-.1,0), (.1,.1,0)
+		);
 	});
-	setcolor(0,0,1,1);
-	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(@{$view->latlon}));
-	setcolor(0,1,1,1);
-	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(90,0));
-	setcolor(1,1,1,1);
-	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(0,90));
-	setcolor(1,.5,1,1);
-	plot_xyz(GL_LINE_STRIP, 0,0,0, latlon_to_xyz(0,180));
+}
+
+sub render_globe_panel {
+	my ($lat, $lon)= @_;
+	glDisable(GL_TEXTURE_2D);
+	glDisable(GL_CULL_FACE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_ONE, GL_ONE);
+	my ($lat0, $lon0)= (int(($lat+360)/10)*10-360-10, int(($lon+360)/10)*10-360-10);
+	my ($lat1, $lon1)= ($lat0+25, $lon0+25);
+	for (my $la= $lat0; $la < $lat1; $la += 5) {
+		for (my $lo= $lon0; $lo < $lon1; $lo += 5) {
+			my @pts= ( latlon_to_xyz($la,$lo), latlon_to_xyz($la,$lo+5), latlon_to_xyz($la+5,$lo+5), latlon_to_xyz($la+5,$lo) );
+			setcolor '#001100';
+			plot_xyz(GL_QUADS, @pts);
+			setcolor '#002200';
+			plot_xyz(GL_LINE_LOOP, @pts);
+		}
+	}
 }
