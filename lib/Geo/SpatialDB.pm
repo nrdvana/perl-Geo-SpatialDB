@@ -232,37 +232,29 @@ sub add_entity {
 	$e->storage($self->storage) if $e->can('storage');
 	$self->storage->put(entity => $e->id, Geo::SpatialDB::Entity->get_ctor_args($e));
 	for my $layer ($self->layer_list) {
-		my $added_to_tile= $self->_add_entity_to_layer($layer, $e);
-		$added{$layer->code} += $added_to_tile if $added_to_tile;
+		$added{$layer->code} += $self->_add_entity_to_layer($layer, $e)
+			if $layer->includes_entity($e);
 	}
 	return \%added;
 }
 sub _add_entity_to_layer {
 	my ($self, $layer, $e)= @_;
-	return 0 unless $layer->includes_entity($e);
 	my $stor= $self->storage;
 	my $index_name= $layer->index_name;
-	$self->storage->indexes->{$index_name} or $self->storage->create_index($index_name);
-	my $features= $e->features_at_resolution($layer->min_feature_size);
-	return 0 unless $features;
-	my %added_to_tile;
-	for my $feature (@$features) {
-		my $rad= $feature->radius;
-		next unless (!$layer->min_feature_size or $rad >= $layer->min_feature_size)
-		        and (!$layer->max_feature_size or $rad <= $layer->max_feature_size);
-		my $tiles= $layer->mapper->tiles_in($feature);
-		for my $tile_id (grep !$added_to_tile{$_}++, @$tiles) {
-			my $bucket= $stor->get($index_name, $tile_id) // {};
-			my $ents= ($bucket->{ent} //= []);
-			my %seen= map { $_ => 1 } @$ents;
-			if (!$seen{$e->id}) {
-				push @$ents, $e->id;
-				$stor->put($index_name, $tile_id, $bucket);
-				++$added_to_tile{$tile_id};
-			}
+	$self->storage->create_index($index_name)
+		unless $self->storage->indexes->{$index_name};
+	my $added_to_tile= 0;
+	for my $tile_id (@{$layer->tiles_for_entity($e)}) {
+		my $bucket= $stor->get($index_name, $tile_id) // {};
+		my $ents= ($bucket->{ent} //= []);
+		my %seen= map { $_ => 1 } @$ents;
+		if (!$seen{$e->id}) {
+			push @$ents, $e->id;
+			$stor->put($index_name, $tile_id, $bucket);
+			++$added_to_tile;
 		}
 	}
-	return scalar keys %added_to_tile;
+	return $added_to_tile;
 }
 
 =head2 find_in

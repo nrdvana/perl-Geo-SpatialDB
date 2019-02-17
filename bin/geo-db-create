@@ -1,12 +1,16 @@
 #! /usr/bin/env perl
 use strict;
 use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
 use Log::Any '$log';
 use Log::Progress;
 use Log::Any::Adapter 'Daemontools', -init => { env => 1, argv => 'consume' };
 use JSON::MaybeXS;
 use Try::Tiny;
 use Geo::SpatialDB;
+use Geo::SpatialDB::Math 'earth_radius';
+use Math::Trig 'pi';
 
 # ABSTRACT: Define the paramters for a new Geo DB
 # VERSION
@@ -24,8 +28,11 @@ use Geo::SpatialDB;
 =item --layer=JSON
 
 Specify a new layer's attributes as JSON (relaxed syntax).  This can be given multiple times.
+A good default for steet maps are:
 
-  '{code:"roads",mapper:{CLASS:"Rect",lat_divs:18000,lon_divs:36000}}'
+  -l '{code:"roads0",size_filter:[6000,null]}'
+  -l '{code:"roads1",size_filter:[1000,6000]}'
+  -l '{code:"roads2",size_filter:[null,1000]}'
 
 =item --storage=JSON
 
@@ -64,12 +71,26 @@ $storage->{path} //= shift;
 
 my $geo_db= Geo::SpatialDB->new(storage => $storage);
 try {
-	$geo_db->add_layer($_) for @layers;
+	for (@layers) {
+		if (!$_->{mapper}) {
+			my $tile_meters= $_->{size_filter}[1]? $_->{size_filter}[1] / 9
+				: $_->{size_filter}[0]? $_->{size_filter}[0] * 9
+				: die "Layer specification requires 'mapper' or 'size_filter'\n";
+			$_->{mapper}= {
+				CLASS => 'Rect',
+				lat_divs => int(earth_radius * pi / $tile_meters),
+				lon_divs => int(earth_radius * pi * 2 / $tile_meters),
+			};
+			$log->notice("Using mapper ".JSON->new->canonical->encode($_->{mapper})." for layer ".$_->{code});
+		}
+		$geo_db->add_layer($_);
+	}
 	$geo_db->storage->commit;
 }
 catch {
-	warn $_;
-	warn "Database was not successfully created.  You probably want to 'rm -r ".$storage->{path}."'\n";
+	chomp;
+	$log->error($_);
+	die "Database was not successfully created.  You probably want to 'rm -r ".$storage->{path}."'\n";
 };
 
 # PODNAME: geo-db-create

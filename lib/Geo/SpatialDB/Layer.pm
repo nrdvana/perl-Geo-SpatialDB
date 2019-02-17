@@ -1,6 +1,7 @@
 package Geo::SpatialDB::Layer;
 use Moo 2;
 use Geo::SpatialDB::TileMapper;
+use Geo::SpatialDB::Math 'earth_radius';
 with 'Geo::SpatialDB::Serializable';
 
 # ABSTRACT: Holds parameters for how to index a subset of entities in the database
@@ -36,19 +37,24 @@ Comment for human consumption
 
 An instance of L<Geo::SpatialDB::TileMapper>
 
-=head2 max_entity_size
+=head2 size_filter
 
-Maximum radius in meters of an entity which should be added to this layer.
-
-Note that this radius can be scaled by I<significance>, according to
-L</type_filters>.
-
-=head2 min_entity_size
-
-Minimum radius in meters of an entity which should be added to this layer.
+Arrayref of minimum and maximum entity size (in meters) to be included in this layer.
 
 Note that this radius can be scaled by I<significance>, according to
 L</type_filters>.
+
+=over
+
+=item min_entity_size
+
+Alias for C<< size_filter->[0] >>
+
+=item max_entity_size
+
+Alias for C<< size_filter->[1] >>
+
+=back
 
 =head2 type_filters
 
@@ -85,8 +91,9 @@ sub index_name           { 'layer.' . shift->code }
 has description       => ( is => 'rw' );
 has _mapper_arg       => ( is => 'rw', init_arg => 'mapper', required => 1 );
 has mapper            => ( is => 'lazy', init_arg => undef );
-has max_feature_size  => ( is => 'rw' );
-has min_feature_size  => ( is => 'rw' );
+has size_filter       => ( is => 'rw' );
+sub min_entity_size      { $_[0]{size_filter}[0] }
+sub max_entity_size      { $_[0]{size_filter}[1] }
 has type_filters      => ( is => 'rw' );
 has type_filter_regex => ( is => 'lazy' );
 has render_config     => ( is => 'rw' );
@@ -109,8 +116,27 @@ sub _build_type_filter_regex {
 
 sub includes_entity {
 	my ($self, $entity)= @_;
-	return !defined $self->type_filter_regex
-		|| ($entity->type =~ $self->type_filter_regex);
+	if ($self->max_entity_size || $self->min_entity_size) {
+		my $entity_area= $entity->features_at_resolution(earth_radius * 100);
+		return unless $entity_area && @$entity_area
+			&& (!$self->max_entity_size || $entity_area->[0]->radius <= $self->max_entity_size)
+			&& (!$self->min_entity_size || $entity_area->[0]->radius >= $self->min_entity_size);
+	}
+	if (defined $self->type_filter_regex) {
+		return unless $entity->type && $entity->type =~ $self->type_filter_regex;
+	}
+	return 1;
+}
+
+sub tiles_for_entity {
+	my ($self, $entity)= @_;
+	my $features= $entity->features_at_resolution($self->min_entity_size || 0);
+	my %tile_added;
+	for my $feature (@$features) {
+		my $tiles= $self->mapper->tiles_in($feature);
+		$tile_added{$_}++ for @$tiles;
+	}
+	return [ keys %tile_added ];
 }
 
 1;

@@ -92,24 +92,31 @@ sub _build_endpoint1 { sprintf '%.6lf,%.6lf', @{$_[0]->latlon_seq}[-2,-1] }
 
 See L<Geo::SpatialDB::Entity/features_at_resolution>
 
-This implementation walks the L</path> and generates a feature at every
-C<$resolution * 2> degrees latitude.
+This implementation walks the L</latlon_seq> and generates a feature each time the
+sequence exceeds C<$resolution> meters.
 
 =cut
 
 sub features_at_resolution {
 	my ($self, $resolution)= @_;
-	# I lied.   Just return every point along the path with a radius
-	# of the distance to the next/previous point.
-	# TODO: actually implement algorithm of following the path.
-	my @ret;
 	my $ll_seq= $self->latlon_seq;
-	for (my $i= 0; $i < int(@$ll_seq/4); $i++) {
-		my ($lat0, $lon0, $lat1, $lon1)= @{$ll_seq}[$i*4 .. $i*4+3];
-		defined $_ or croak("wtf: i=$i") for @{$ll_seq}[$i*4 .. $i*4+3];
-		push @ret, llbox( min($lat0, $lat1), min($lon0, $lon1), max($lat0, $lat1), max($lon0, $lon1) );
-		
+	if (!$ll_seq || !@$ll_seq || @$ll_seq%1) {
+		croak "Invalid latlon_seq on entity ".$self->id;
 	}
+	my (@ret, $lat, $lon, $llbox);
+	$llbox= Geo::SpatialDB::Math::LLBox->new($ll_seq->[0],$ll_seq->[1],$ll_seq->[0],$ll_seq->[1]);
+	for (my $i= 1; $i < int(@$ll_seq/2); $i++) {
+		($lat,$lon)= @{$ll_seq}[$i*2 .. $i*2+1];
+		$llbox->lat0= $lat if $llbox->lat0 > $lat;
+		$llbox->lat1= $lat if $llbox->lat1 < $lat;
+		$llbox->lon0= $lon if $llbox->lon0 > $lon;
+		$llbox->lon1= $lon if $llbox->lon1 < $lon;
+		if ($llbox->radius > $resolution) {
+			push @ret, $llbox;
+			$llbox= Geo::SpatialDB::Math::LLBox->new($lat,$lon,$lat,$lon);
+		}
+	}
+	push @ret, $llbox if $llbox->lat0 != $llbox->lat1 || $llbox->lon0 != $llbox->lon1;
 	\@ret;
 }
 

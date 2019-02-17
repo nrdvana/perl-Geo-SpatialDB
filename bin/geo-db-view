@@ -1,6 +1,8 @@
 #! /usr/bin/env perl
 use strict;
 use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
 BEGIN {
 	eval { require OpenGL::Sandbox; require OpenGL::Sandbox::V1::FTGLFont; 1; }
 		or die <<END
@@ -64,9 +66,6 @@ my $latlon= $opt_start? parse_latlon($opt_start) : find_viewer_start($geo_db);
 my $view= WorldView->new(latlon => $latlon);
 
 make_context;
-glEnable(GL_DEPTH_TEST);
-glEnable(GL_BLEND);
-glEnable(GL_CULL_FACE);
 setup_projection(top => 1, bottom => -1, near => 1, z => 2, far => 1000);
 glClearColor(.5,.5,.5,1);
 my %layer_tile_cache;
@@ -150,7 +149,7 @@ BEGIN {
 
 sub render_tile {
 	my ($layer, $tile_id)= @_;
-	my $t= $layer_tile_cache{$layer->code}{$tile_id} //= build_tile_cache($layer, $tile_id);
+	my $t= ($layer_tile_cache{$layer->code}{$tile_id} //= build_tile_cache($layer, $tile_id));
 	return unless $t;
 	#print "Render tile $tile->{id}\n";
 	$t->{dlist}->call;
